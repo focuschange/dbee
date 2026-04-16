@@ -2731,22 +2731,42 @@ function appendChatMessage(role, content, sql) {
             html += `<div class="ai-msg-sql">
                 <div class="ai-sql-header">
                     <span>Generated SQL</span>
-                    <button class="btn btn-primary btn-xs ai-btn-insert" title="Insert to Editor">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
-                        Insert
-                    </button>
+                    <div style="display:flex;gap:4px;">
+                        <button class="btn btn-ghost btn-xs ai-btn-edit" title="Edit before inserting">Edit</button>
+                        <button class="btn btn-primary btn-xs ai-btn-insert" title="Insert to Editor">Insert</button>
+                    </div>
                 </div>
                 <pre class="ai-sql-code">${escapeHtml(sql)}</pre>
+                <textarea class="ai-sql-edit" style="display:none;">${escapeHtml(sql)}</textarea>
             </div>`;
         }
         msgDiv.innerHTML = html;
 
-        // Attach insert button handler
+        // Attach insert/edit button handlers
         if (sql) {
             const insertBtn = msgDiv.querySelector('.ai-btn-insert');
-            if (insertBtn) {
-                insertBtn.onclick = () => insertSqlToEditor(sql);
-            }
+            const editBtn = msgDiv.querySelector('.ai-btn-edit');
+            const preEl = msgDiv.querySelector('.ai-sql-code');
+            const textareaEl = msgDiv.querySelector('.ai-sql-edit');
+
+            editBtn.onclick = () => {
+                if (textareaEl.style.display === 'none') {
+                    preEl.style.display = 'none';
+                    textareaEl.style.display = 'block';
+                    textareaEl.focus();
+                    editBtn.textContent = 'Done';
+                } else {
+                    preEl.textContent = textareaEl.value;
+                    preEl.style.display = '';
+                    textareaEl.style.display = 'none';
+                    editBtn.textContent = 'Edit';
+                }
+            };
+
+            insertBtn.onclick = () => {
+                const finalSql = textareaEl.style.display !== 'none' ? textareaEl.value : preEl.textContent;
+                insertSqlToEditor(finalSql);
+            };
         }
     } else if (role === 'error') {
         msgDiv.className = 'ai-chat-msg ai-chat-msg-error';

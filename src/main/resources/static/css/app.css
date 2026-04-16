@@ -2280,6 +2280,21 @@ kbd {
     word-break: break-word;
 }
 
+.ai-sql-edit {
+    width: 100%;
+    min-height: 60px;
+    padding: 10px 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    background: var(--bg-base);
+    color: var(--text-primary);
+    border: 1px solid var(--accent);
+    border-top: none;
+    resize: vertical;
+    outline: none;
+}
+
 .btn-xs {
     padding: 2px 8px;
     font-size: 11px;
