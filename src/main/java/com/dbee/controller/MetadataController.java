@@ -63,6 +63,43 @@ public class MetadataController {
         return metadataService.getIndexes(connectionId, schema, table);
     }
 
+    @GetMapping("/{connectionId}/schemas/{schema}/documentation")
+    public java.util.Map<String, String> getSchemaDocumentation(@PathVariable String connectionId,
+                                                                  @PathVariable String schema) {
+        var tables = metadataService.getTables(connectionId, schema);
+        StringBuilder md = new StringBuilder();
+        md.append("# Database Schema: ").append(schema).append("\n\n");
+        md.append("Generated: ").append(java.time.LocalDateTime.now()).append("\n\n");
+        md.append("## Tables\n\n");
+        md.append("| # | Table | Type | Columns |\n|---|-------|------|--------|\n");
+
+        int idx = 1;
+        for (var table : tables) {
+            var cols = metadataService.getColumns(connectionId, schema, table.name());
+            md.append("| ").append(idx++).append(" | ").append(table.name())
+              .append(" | ").append(table.type()).append(" | ").append(cols.size()).append(" |\n");
+        }
+
+        md.append("\n---\n\n## Table Details\n\n");
+
+        for (var table : tables) {
+            md.append("### ").append(table.name()).append("\n\n");
+            var cols = metadataService.getColumns(connectionId, schema, table.name());
+            var pks = metadataService.getPrimaryKeys(connectionId, schema, table.name());
+            var pkNames = pks.stream().map(PrimaryKeyInfo::columnName).toList();
+
+            md.append("| Column | Type | Size | Nullable | PK |\n|--------|------|------|----------|----|\n");
+            for (var col : cols) {
+                md.append("| ").append(col.name()).append(" | ").append(col.typeName())
+                  .append(" | ").append(col.size()).append(" | ").append(col.nullable() ? "YES" : "NO")
+                  .append(" | ").append(pkNames.contains(col.name()) ? "PK" : "").append(" |\n");
+            }
+            md.append("\n");
+        }
+
+        return java.util.Map.of("markdown", md.toString());
+    }
+
     @GetMapping("/{connectionId}/schemas/{schema}/er-diagram")
     public java.util.Map<String, String> getErDiagram(@PathVariable String connectionId,
                                                        @PathVariable String schema) {

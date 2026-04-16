@@ -55,6 +55,7 @@ const api = {
         ddl: (connId, schema, table) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/tables/${encodeURIComponent(table)}/ddl`),
         indexes: (connId, schema, table) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/tables/${encodeURIComponent(table)}/indexes`),
         erDiagram: (connId, schema) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/er-diagram`),
+        documentation: (connId, schema) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/documentation`),
     },
     llm: {
         getSettings: () => api.request('GET', '/api/llm/settings'),
@@ -3217,6 +3218,24 @@ FROM ${table};
 // ============================================================
 // DB Monitoring (#80, #81)
 // ============================================================
+async function exportSchemaDoc() {
+    if (!state.activeConnectionId) { updateStatus('No connection', true); return; }
+    // Find current schema from autocomplete cache
+    const schema = state.autocompleteCache?.schemas?.[0]?.name;
+    if (!schema) { updateStatus('No schema detected. Connect and expand a schema first.', true); return; }
+    try {
+        updateStatus('Generating documentation...');
+        const result = await api.metadata.documentation(state.activeConnectionId, schema);
+        const blob = new Blob([result.markdown], { type: 'text/markdown' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `${schema}-schema-doc.md`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        updateStatus(`Schema documentation exported for ${schema}`);
+    } catch (e) { updateStatus('Failed: ' + e.message, true); }
+}
+
 function showProcessList() {
     if (!state.activeConnectionId) { updateStatus('No connection', true); return; }
     if (monacoEditor) {
