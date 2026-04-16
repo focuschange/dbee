@@ -41,6 +41,12 @@ public class QueryService {
         DataSource ds = connectionManager.getOrCreate(info);
         QueryResult result = queryExecutor.execute(ds, sql, maxRows, executionId);
 
+        // Auto-reconnect: if connection error, retry once
+        if (result.isError() && isConnectionError(result.getErrorMessage())) {
+            ds = connectionManager.reconnect(info);
+            result = queryExecutor.execute(ds, sql, maxRows, executionId);
+        }
+
         // Record to history
         boolean isError = result.getErrorMessage() != null;
         int rowCount = result.getRows() != null ? result.getRows().size() : result.getAffectedRows();
@@ -209,6 +215,14 @@ public class QueryService {
         return (schema != null && !schema.isEmpty())
                 ? quoteIdentifier(schema) + "." + quoteIdentifier(table)
                 : quoteIdentifier(table);
+    }
+
+    private boolean isConnectionError(String msg) {
+        if (msg == null) return false;
+        String lower = msg.toLowerCase();
+        return lower.contains("connection") || lower.contains("closed") ||
+               lower.contains("refused") || lower.contains("timeout") ||
+               lower.contains("communications link") || lower.contains("broken pipe");
     }
 
     private String quoteIdentifier(String name) {

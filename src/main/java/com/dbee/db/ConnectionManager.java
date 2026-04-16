@@ -76,7 +76,22 @@ public class ConnectionManager {
 
     public boolean isConnected(String connectionId) {
         HikariDataSource ds = pools.get(connectionId);
-        return ds != null && !ds.isClosed();
+        if (ds == null || ds.isClosed()) return false;
+        // Validate with a quick connection test
+        try (Connection conn = ds.getConnection()) {
+            return conn.isValid(2);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Reconnect a broken connection by closing and recreating the pool.
+     */
+    public DataSource reconnect(ConnectionInfo info) {
+        close(info.getId());
+        log.info("Reconnecting: {}", info.getName());
+        return getOrCreate(info);
     }
 
     public SshTunnelManager getSshTunnelManager() {
