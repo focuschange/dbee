@@ -1106,6 +1106,10 @@ function showTableContextMenu(e, connId, schema, tableName) {
         <div class="ctx-separator"></div>
         <div class="ctx-item" data-action="show-ddl">Show CREATE TABLE</div>
         <div class="ctx-item" data-action="show-indexes">Show Indexes</div>
+        <div class="ctx-item" data-action="show-fk">Show Foreign Keys</div>
+        <div class="ctx-separator"></div>
+        <div class="ctx-item" data-action="create-view">Create View from Table</div>
+        <div class="ctx-item" data-action="show-triggers">Show Triggers</div>
         <div class="ctx-separator"></div>
         <div class="ctx-item" data-action="ai-explain-table">AI: Explain Table</div>
     `;
@@ -1123,6 +1127,22 @@ function showTableContextMenu(e, connId, schema, tableName) {
         menu.remove();
         await showTableIndexes(connId, schema, tableName);
     };
+    menu.querySelector('[data-action="show-fk"]').onclick = async () => {
+        menu.remove();
+        await showTableForeignKeys(connId, schema, tableName);
+    };
+    menu.querySelector('[data-action="create-view"]').onclick = () => {
+        menu.remove();
+        if (monacoEditor) {
+            monacoEditor.setValue(`CREATE VIEW v_${tableName} AS\nSELECT *\nFROM ${schema}.${tableName};`);
+            monacoEditor.focus();
+            updateStatus('View template generated — edit and execute');
+        }
+    };
+    menu.querySelector('[data-action="show-triggers"]').onclick = async () => {
+        menu.remove();
+        await showTableTriggers(connId, schema, tableName);
+    };
     menu.querySelector('[data-action="ai-explain-table"]').onclick = async () => {
         menu.remove();
         await aiExplainTable(connId, schema, tableName);
@@ -1130,6 +1150,23 @@ function showTableContextMenu(e, connId, schema, tableName) {
 
     const close = () => { menu.remove(); document.removeEventListener('click', close); };
     setTimeout(() => document.addEventListener('click', close), 0);
+}
+
+async function showTableForeignKeys(connId, schema, tableName) {
+    try {
+        // Use a simple query to get FK info — or reuse metadata
+        const sql = `-- Foreign Keys on ${schema}.${tableName}\n-- (Query INFORMATION_SCHEMA for your database)\nSELECT * FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA='${schema}' AND TABLE_NAME='${tableName}' AND REFERENCED_TABLE_NAME IS NOT NULL;`;
+        if (monacoEditor) { monacoEditor.setValue(sql); monacoEditor.focus(); }
+        updateStatus('FK query loaded — execute to see results');
+    } catch (e) { updateStatus('Failed: ' + e.message, true); }
+}
+
+async function showTableTriggers(connId, schema, tableName) {
+    try {
+        const sql = `-- Triggers on ${schema}.${tableName}\nSELECT TRIGGER_NAME, EVENT_MANIPULATION, ACTION_TIMING, ACTION_STATEMENT\nFROM information_schema.TRIGGERS\nWHERE EVENT_OBJECT_SCHEMA='${schema}' AND EVENT_OBJECT_TABLE='${tableName}';`;
+        if (monacoEditor) { monacoEditor.setValue(sql); monacoEditor.focus(); }
+        updateStatus('Trigger query loaded — execute to see results');
+    } catch (e) { updateStatus('Failed: ' + e.message, true); }
 }
 
 async function aiExplainTable(connId, schema, tableName) {
