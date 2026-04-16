@@ -1,6 +1,7 @@
 package com.dbee;
 
 import com.dbee.config.ConnectionConfig;
+import com.dbee.config.AppSecurityConfig;
 import com.dbee.config.LlmConfig;
 import com.dbee.config.SavedQueryConfig;
 import com.dbee.config.NoteConfig;
@@ -48,6 +49,11 @@ public class DBeeApplication {
     @Bean
     public QueryHistoryConfig queryHistoryConfig() {
         return new QueryHistoryConfig();
+    }
+
+    @Bean
+    public AppSecurityConfig appSecurityConfig() {
+        return new AppSecurityConfig();
     }
 
     @Bean
