@@ -796,6 +796,16 @@ kbd {
     opacity: 0.6;
 }
 
+/* Data type formatting */
+.result-table td.cell-number { text-align: right; font-variant-numeric: tabular-nums; }
+.result-table td.cell-date { color: var(--accent); }
+.result-table td.cell-json { color: #e8a838; font-size: 11px; }
+.cell-bool { padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+.cell-bool-true { background: var(--success-subtle); color: var(--success); }
+.cell-bool-false { background: var(--error-subtle); color: var(--error); }
+.cell-binary { color: var(--text-muted); font-style: italic; }
+.cell-truncated { color: var(--text-muted); }
+
 /* Inline cell editing */
 .result-table td[data-col-idx] {
     cursor: default;

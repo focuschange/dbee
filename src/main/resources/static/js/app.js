@@ -1181,6 +1181,51 @@ function applyFilterAndSort() {
     renderResultTable(rows, totalRows);
 }
 
+function formatCellValue(val, typeName) {
+    if (val === null) return { html: 'NULL', cls: 'null-value' };
+    const str = String(val);
+    const upper = (typeName || '').toUpperCase();
+
+    // Numeric types — right align, thousand separator
+    if (/^(INT|BIGINT|SMALLINT|TINYINT|MEDIUMINT|DECIMAL|NUMERIC|FLOAT|DOUBLE|REAL|NUMBER)/.test(upper)) {
+        const num = Number(val);
+        if (!isNaN(num) && isFinite(num)) {
+            const formatted = upper.includes('DECIMAL') || upper.includes('NUMERIC') || upper.includes('FLOAT') || upper.includes('DOUBLE') || upper.includes('REAL')
+                ? num.toLocaleString(undefined, { maximumFractionDigits: 10 })
+                : num.toLocaleString();
+            return { html: escapeHtml(formatted), cls: 'cell-number' };
+        }
+    }
+
+    // Boolean
+    if (/^(BOOL|BOOLEAN|BIT)/.test(upper)) {
+        const b = str === '1' || str.toLowerCase() === 'true';
+        return { html: `<span class="cell-bool cell-bool-${b}">${b ? 'true' : 'false'}</span>`, cls: '' };
+    }
+
+    // Date/Time
+    if (/^(DATE|TIME|DATETIME|TIMESTAMP)/.test(upper)) {
+        return { html: escapeHtml(str), cls: 'cell-date' };
+    }
+
+    // JSON
+    if (/^(JSON|JSONB)/.test(upper)) {
+        return { html: escapeHtml(str.length > 100 ? str.substring(0, 100) + '...' : str), cls: 'cell-json' };
+    }
+
+    // Binary
+    if (str === '[BINARY]') {
+        return { html: '<span class="cell-binary">[BINARY]</span>', cls: '' };
+    }
+
+    // Long text — truncate
+    if (str.length > 200) {
+        return { html: escapeHtml(str.substring(0, 200)) + '<span class="cell-truncated">...</span>', cls: '' };
+    }
+
+    return { html: escapeHtml(str), cls: '' };
+}
+
 function renderResultTable(rows, totalRows) {
     const container = document.getElementById('result-content');
     const { columnNames } = state.resultData;
@@ -1197,15 +1242,21 @@ function renderResultTable(rows, totalRows) {
     html += '</tr></thead><tbody>';
 
     const editable = state.resultData.tableName && !keyword;
+    const typeNames = state.resultData.columnTypeNames || [];
     rows.forEach((row, rowIdx) => {
         html += `<tr data-row-idx="${rowIdx}">`;
         row.forEach((val, colIdx) => {
             const editAttr = editable ? ` data-col-idx="${colIdx}"` : '';
-            if (val === null) {
-                html += `<td class="null-value"${editAttr}>NULL</td>`;
+            if (keyword) {
+                // In filter mode, use simple rendering with highlight
+                if (val === null) {
+                    html += `<td class="null-value"${editAttr}>NULL</td>`;
+                } else {
+                    html += `<td${editAttr}>${highlightMatch(String(val), keyword)}</td>`;
+                }
             } else {
-                const str = String(val);
-                html += `<td${editAttr}>${keyword ? highlightMatch(str, keyword) : escapeHtml(str)}</td>`;
+                const cell = formatCellValue(val, typeNames[colIdx]);
+                html += `<td class="${cell.cls}"${editAttr}>${cell.html}</td>`;
             }
         });
         html += '</tr>';
