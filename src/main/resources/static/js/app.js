@@ -3167,6 +3167,49 @@ async function aiIndexHint() {
 }
 
 // ============================================================
+// Connection Import/Export
+// ============================================================
+function exportConnections() {
+    if (!state.connections || state.connections.length === 0) { updateStatus('No connections to export', true); return; }
+    // Strip passwords for security
+    const safe = state.connections.map(c => {
+        const copy = { ...c, password: '***' };
+        return copy;
+    });
+    const blob = new Blob([JSON.stringify(safe, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'dbee-connections.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    updateStatus(`Exported ${safe.length} connections (passwords masked)`);
+}
+
+function importConnections() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = async () => {
+        if (!input.files.length) return;
+        try {
+            const text = await input.files[0].text();
+            const conns = JSON.parse(text);
+            if (!Array.isArray(conns)) { updateStatus('Invalid connections file', true); return; }
+            let imported = 0;
+            for (const conn of conns) {
+                conn.password = conn.password === '***' ? '' : (conn.password || '');
+                delete conn.id; // will get new ID
+                await api.connections.create(conn);
+                imported++;
+            }
+            await loadConnections();
+            updateStatus(`Imported ${imported} connections`);
+        } catch (e) { updateStatus('Import failed: ' + e.message, true); }
+    };
+    input.click();
+}
+
+// ============================================================
 // Data Import
 // ============================================================
 function showImportDialog() {
