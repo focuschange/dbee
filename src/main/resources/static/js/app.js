@@ -86,6 +86,7 @@ const api = {
         },
         delete: (id) => api.request('DELETE', `/api/history/${id}`),
         clear: () => api.request('DELETE', '/api/history'),
+        stats: () => api.request('GET', '/api/history/stats'),
     },
     export: {
         download: async (format, connectionId, sql, extra = '') => {
@@ -2915,6 +2916,40 @@ function formatRelativeTime(timestamp) {
     return new Date(timestamp).toLocaleDateString();
 }
 
+async function showHistoryStats() {
+    const list = document.getElementById('history-list');
+    try {
+        const s = await api.history.stats();
+        if (s.totalQueries === 0) {
+            list.innerHTML = '<div class="history-empty">No query history for statistics.</div>';
+            return;
+        }
+        let html = `<div class="history-stats">
+            <div class="stats-grid">
+                <div class="stat-card"><div class="stat-value">${s.totalQueries}</div><div class="stat-label">Total Queries</div></div>
+                <div class="stat-card"><div class="stat-value">${s.avgTimeMs}ms</div><div class="stat-label">Avg Time</div></div>
+                <div class="stat-card"><div class="stat-value">${s.maxTimeMs}ms</div><div class="stat-label">Max Time</div></div>
+                <div class="stat-card"><div class="stat-value">${s.errorRate}%</div><div class="stat-label">Error Rate</div></div>
+            </div>`;
+        if (s.slowestQueries && s.slowestQueries.length > 0) {
+            html += '<div class="stats-section-title">Slowest Queries</div>';
+            s.slowestQueries.forEach(q => {
+                html += `<div class="history-item">
+                    <div class="history-item-header">
+                        <span class="history-time-badge">${q.executionTimeMs}ms</span>
+                        <span class="history-conn">${escapeHtml(q.connectionName || '')}</span>
+                    </div>
+                    <pre class="history-sql">${escapeHtml(q.sql)}</pre>
+                </div>`;
+            });
+        }
+        html += '</div>';
+        list.innerHTML = html;
+    } catch (e) {
+        list.innerHTML = `<div class="history-empty">Failed to load stats: ${e.message}</div>`;
+    }
+}
+
 function initHistoryManager() {
     document.getElementById('btn-history').onclick = showHistoryDialog;
     document.getElementById('history-dialog-close').onclick = hideHistoryDialog;
@@ -2929,6 +2964,9 @@ function initHistoryManager() {
             loadHistory(e.target.value.trim() || undefined);
         }, 300);
     });
+
+    // Stats
+    document.getElementById('btn-history-stats').onclick = showHistoryStats;
 
     // Clear all
     document.getElementById('btn-clear-history').onclick = async () => {
