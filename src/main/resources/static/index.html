@@ -74,6 +74,7 @@
                 <button class="menu-trigger">View</button>
                 <div class="menu-dropdown">
                     <button class="menu-action" id="btn-toggle-toolbar" onclick="toggleIconToolbar()">Hide Toolbar</button>
+                    <button class="menu-action" onclick="showChartDialog()">Chart Visualization</button>
                     <button class="menu-action" onclick="showEditorSettings()">Editor Settings</button>
                     <div class="menu-separator"></div>
                     <div class="menu-label">Zoom</div>
@@ -499,6 +500,32 @@
         </div>
     </div>
 
+    <!-- Chart Modal -->
+    <div id="chart-dialog" class="modal" style="display:none;">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content modal-wide" style="max-width:800px;height:600px;">
+            <div class="modal-header">
+                <h3>Chart Visualization</h3>
+                <button class="modal-close" onclick="document.getElementById('chart-dialog').style.display='none'">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div style="padding:10px 20px;display:flex;gap:10px;align-items:center;">
+                <select id="chart-type" class="btn btn-ghost btn-sm" onchange="renderChart()">
+                    <option value="bar">Bar</option>
+                    <option value="line">Line</option>
+                    <option value="pie">Pie</option>
+                    <option value="doughnut">Doughnut</option>
+                </select>
+                <select id="chart-label-col" class="btn btn-ghost btn-sm" onchange="renderChart()"></select>
+                <select id="chart-data-col" class="btn btn-ghost btn-sm" onchange="renderChart()"></select>
+            </div>
+            <div style="flex:1;padding:10px 20px;overflow:hidden;">
+                <canvas id="chart-canvas"></canvas>
+            </div>
+        </div>
+    </div>
+
     <!-- Import Dialog -->
     <div id="import-dialog" class="modal" style="display:none;">
         <div class="modal-backdrop"></div>
@@ -743,6 +770,7 @@
     </div>
 
     <script src="https://uicdn.toast.com/editor/latest/toastui-editor-all.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sql-formatter@15.4.2/dist/sql-formatter.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/loader.js"></script>

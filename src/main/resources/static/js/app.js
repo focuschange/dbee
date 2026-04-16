@@ -3167,6 +3167,64 @@ async function aiIndexHint() {
 }
 
 // ============================================================
+// Chart Visualization
+// ============================================================
+let chartInstance = null;
+
+function showChartDialog() {
+    if (!state.resultData || !state.resultData.rows.length) {
+        updateStatus('No result data to chart', true); return;
+    }
+    const dialog = document.getElementById('chart-dialog');
+    dialog.style.display = 'flex';
+    dialog.querySelector('.modal-backdrop').onclick = () => dialog.style.display = 'none';
+
+    const cols = state.resultData.columnNames;
+    const labelSel = document.getElementById('chart-label-col');
+    const dataSel = document.getElementById('chart-data-col');
+    labelSel.innerHTML = cols.map((c, i) => `<option value="${i}">${c} (Label)</option>`).join('');
+    dataSel.innerHTML = cols.map((c, i) => `<option value="${i}"${i === 1 ? ' selected' : ''}>${c} (Data)</option>`).join('');
+
+    renderChart();
+}
+
+function renderChart() {
+    if (!state.resultData) return;
+    const type = document.getElementById('chart-type').value;
+    const labelIdx = parseInt(document.getElementById('chart-label-col').value);
+    const dataIdx = parseInt(document.getElementById('chart-data-col').value);
+    const rows = state.resultData.rows.slice(0, 100); // max 100 data points
+
+    const labels = rows.map(r => r[labelIdx] !== null ? String(r[labelIdx]) : 'NULL');
+    const data = rows.map(r => {
+        const v = r[dataIdx];
+        return v !== null ? (typeof v === 'number' ? v : parseFloat(v) || 0) : 0;
+    });
+
+    const colors = labels.map((_, i) => `hsl(${(i * 37) % 360}, 70%, 55%)`);
+    const canvas = document.getElementById('chart-canvas');
+
+    if (chartInstance) chartInstance.destroy();
+    chartInstance = new Chart(canvas, {
+        type,
+        data: {
+            labels,
+            datasets: [{
+                label: state.resultData.columnNames[dataIdx],
+                data,
+                backgroundColor: colors,
+                borderColor: type === 'line' ? 'var(--accent)' : colors,
+                borderWidth: 1,
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: type === 'pie' || type === 'doughnut' } },
+        }
+    });
+}
+
+// ============================================================
 // Internationalization (i18n)
 // ============================================================
 let i18nData = {};
