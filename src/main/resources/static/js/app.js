@@ -1550,6 +1550,45 @@ function renderResultTable(rows, totalRows) {
         };
     });
 
+    // Right-click copy menu on cells
+    container.querySelectorAll('.result-table tbody td').forEach(td => {
+        td.oncontextmenu = (e) => {
+            e.preventDefault();
+            const rowIdx = parseInt(td.parentElement.dataset.rowIdx);
+            const colIdx = Array.from(td.parentElement.children).indexOf(td);
+            let existing = document.getElementById('table-ctx-menu');
+            if (existing) existing.remove();
+            const menu = document.createElement('div');
+            menu.id = 'table-ctx-menu';
+            menu.className = 'context-menu';
+            menu.style.cssText = `display:block;left:${e.clientX}px;top:${e.clientY}px`;
+            menu.innerHTML = `
+                <div class="ctx-item" data-action="copy-cell">Copy Cell</div>
+                <div class="ctx-item" data-action="copy-row">Copy Row (TSV)</div>
+                <div class="ctx-item" data-action="copy-all">Copy All (TSV)</div>
+            `;
+            document.body.appendChild(menu);
+
+            menu.querySelector('[data-action="copy-cell"]').onclick = () => {
+                const val = state.resultData.rows[rowIdx]?.[colIdx];
+                navigator.clipboard.writeText(val === null ? 'NULL' : String(val));
+                updateStatus('Cell copied'); menu.remove();
+            };
+            menu.querySelector('[data-action="copy-row"]').onclick = () => {
+                const row = state.resultData.rows[rowIdx];
+                if (row) navigator.clipboard.writeText(row.map(v => v === null ? 'NULL' : String(v)).join('\t'));
+                updateStatus('Row copied'); menu.remove();
+            };
+            menu.querySelector('[data-action="copy-all"]').onclick = () => {
+                const { columnNames: cols, rows: allRows } = state.resultData;
+                const tsv = cols.join('\t') + '\n' + allRows.map(r => r.map(v => v === null ? 'NULL' : String(v)).join('\t')).join('\n');
+                navigator.clipboard.writeText(tsv);
+                updateStatus(`Copied ${allRows.length} rows`); menu.remove();
+            };
+            setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 0);
+        };
+    });
+
     // Row selection for delete
     container.querySelectorAll('.result-table tbody tr').forEach(tr => {
         tr.onclick = () => {
