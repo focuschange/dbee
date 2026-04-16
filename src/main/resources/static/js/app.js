@@ -2027,6 +2027,13 @@ async function handleContextAction(action) {
         case 'edit':
             showConnectionDialog(contextConn);
             break;
+        case 'clone':
+            const cloned = { ...contextConn, name: contextConn.name + ' (Copy)', properties: { ...contextConn.properties } };
+            delete cloned.id;
+            await api.connections.create(cloned);
+            await loadConnections();
+            updateStatus(`Cloned: ${cloned.name}`);
+            break;
         case 'delete':
             if (confirm(`Delete connection "${contextConn.name}"?`)) {
                 await api.connections.delete(contextConn.id);
