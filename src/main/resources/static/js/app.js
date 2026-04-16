@@ -666,12 +666,14 @@ function createConnectionNode(conn) {
 
     const hasSsh = !!conn.properties?.sshTunnelId;
     const sshBadge = hasSsh ? '<span class="tree-badge ssh-badge" title="SSH Tunnel">SSH</span>' : '';
+    const connColor = conn.properties?.color;
+    const colorDot = connColor ? `<span class="conn-color-dot" style="background:${connColor}"></span>` : '';
 
     node.innerHTML = `
-        <div class="tree-node-content">
+        <div class="tree-node-content"${connColor ? ` style="border-left:3px solid ${connColor};padding-left:4px;"` : ''}>
             <span class="tree-arrow">&#9654;</span>
             <span class="tree-icon icon-db">&#9711;</span>
-            <span class="tree-label">${escapeHtml(conn.name || conn.databaseType)}${sshBadge}</span>
+            <span class="tree-label">${colorDot}${escapeHtml(conn.name || conn.databaseType)}${sshBadge}</span>
         </div>
         <div class="tree-children"></div>
     `;
@@ -2130,6 +2132,7 @@ function showConnectionDialog(existing) {
 
     document.getElementById('conn-name').value = existing ? existing.name : '';
     document.getElementById('conn-group').value = existing?.properties?.group || '';
+    document.getElementById('conn-color').value = existing?.properties?.color || '';
     document.getElementById('conn-type').value = existing ? existing.databaseType : 'MYSQL';
     document.getElementById('conn-host').value = existing ? (existing.host || 'localhost') : 'localhost';
     document.getElementById('conn-port').value = existing ? existing.port : DEFAULT_PORTS['MYSQL'];
@@ -2193,9 +2196,11 @@ function buildConnectionInfo() {
         password: document.getElementById('conn-password').value,
         properties: {}
     };
-    // Group
+    // Group & Color
     const group = document.getElementById('conn-group').value.trim();
     if (group) info.properties.group = group;
+    const color = document.getElementById('conn-color').value;
+    if (color) info.properties.color = color;
 
     if (type === 'ATHENA') {
         info.properties.region = document.getElementById('conn-region').value;
