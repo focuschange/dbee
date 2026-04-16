@@ -96,6 +96,18 @@
                 </div>
             </div>
             <div class="menu-item">
+                <button class="menu-trigger">Tools</button>
+                <div class="menu-dropdown">
+                    <button class="menu-action" onclick="showDashboard()">Dashboard (AI)</button>
+                    <div class="menu-separator"></div>
+                    <button class="menu-action" onclick="showSchemaCompare()">Schema Compare</button>
+                    <button class="menu-action" onclick="showDataCompare()">Data Compare</button>
+                    <div class="menu-separator"></div>
+                    <button class="menu-action" onclick="showProcessList()">Active Sessions</button>
+                    <button class="menu-action" onclick="showDbStatus()">DB Status</button>
+                </div>
+            </div>
+            <div class="menu-item">
                 <button class="menu-trigger">AI</button>
                 <div class="menu-dropdown">
                     <button id="btn-ai-chat" class="menu-action">AI Chat <span class="menu-shortcut">Ctrl+Shift+A</span></button>

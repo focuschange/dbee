@@ -3167,6 +3167,82 @@ async function aiIndexHint() {
 }
 
 // ============================================================
+// Dashboard (#77) - saved query + chart combos
+// ============================================================
+function showDashboard() {
+    if (!state.activeConnectionId) { updateStatus('Connect to a database first', true); return; }
+    toggleAiChatPanel();
+    appendChatMessage('user', 'Create a dashboard summary for this database');
+    const lm = appendChatMessage('loading', '');
+    api.llm.chat(state.activeConnectionId, 'Give me 3-5 useful dashboard queries for this database: row counts per table, recent activity, data distributions. Return each as a SQL query in a code block.')
+        .then(r => { lm.remove(); appendChatMessage(r.error ? 'error' : 'assistant', r.message, r.sql); })
+        .catch(e => { lm.remove(); appendChatMessage('error', e.message); });
+}
+
+// ============================================================
+// Schema & Data Comparison (#78, #79)
+// ============================================================
+function showSchemaCompare() {
+    if (monacoEditor) {
+        monacoEditor.setValue(`-- Schema Comparison: Run on each database and compare results
+-- Database 1:
+SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT
+FROM information_schema.COLUMNS
+WHERE TABLE_SCHEMA = 'your_schema_1'
+ORDER BY TABLE_NAME, ORDINAL_POSITION;
+
+-- Database 2:
+-- Connect to second DB and run the same query, then compare results`);
+        monacoEditor.focus();
+        updateStatus('Schema comparison queries loaded');
+    }
+}
+
+function showDataCompare() {
+    const table = prompt('Table name to compare:');
+    if (!table) return;
+    if (monacoEditor) {
+        monacoEditor.setValue(`-- Data Comparison for: ${table}
+-- Run on Database 1:
+SELECT MD5(GROUP_CONCAT(CONCAT_WS(',', ${table}.*) ORDER BY 1)) AS checksum,
+       COUNT(*) AS row_count
+FROM ${table};
+
+-- Compare checksums and row counts between databases
+-- For detailed diff, use EXCEPT/MINUS or full outer join patterns`);
+        monacoEditor.focus();
+    }
+}
+
+// ============================================================
+// DB Monitoring (#80, #81)
+// ============================================================
+function showProcessList() {
+    if (!state.activeConnectionId) { updateStatus('No connection', true); return; }
+    if (monacoEditor) {
+        monacoEditor.setValue('SHOW PROCESSLIST;');
+        executeQuery();
+    }
+}
+
+function showDbStatus() {
+    if (!state.activeConnectionId) { updateStatus('No connection', true); return; }
+    if (monacoEditor) {
+        monacoEditor.setValue(`-- DB Status Overview
+SHOW GLOBAL STATUS WHERE Variable_name IN ('Connections', 'Threads_connected', 'Threads_running', 'Questions', 'Slow_queries', 'Uptime');
+
+-- Table sizes
+SELECT table_schema AS 'Database',
+       ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS 'Size (MB)',
+       SUM(table_rows) AS 'Total Rows'
+FROM information_schema.TABLES
+GROUP BY table_schema
+ORDER BY SUM(data_length + index_length) DESC;`);
+        executeQuery();
+    }
+}
+
+// ============================================================
 // Chart Visualization
 // ============================================================
 let chartInstance = null;
