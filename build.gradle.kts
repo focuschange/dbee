@@ -38,6 +38,10 @@ dependencies {
     implementation("org.xerial:sqlite-jdbc:3.45.3.0")
     implementation("com.microsoft.sqlserver:mssql-jdbc:12.6.1.jre11")
 
+    // Additional DB drivers (optional — add to classpath as needed)
+    implementation("com.clickhouse:clickhouse-jdbc:0.6.3")
+    implementation("org.duckdb:duckdb_jdbc:1.1.3")
+
     // Testing
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("com.h2database:h2:2.2.224")
