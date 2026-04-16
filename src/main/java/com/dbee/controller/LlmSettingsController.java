@@ -297,6 +297,26 @@ public class LlmSettingsController {
         }
     }
 
+    @GetMapping("/ollama-models")
+    public java.util.List<String> ollamaModels(@RequestParam(defaultValue = "http://localhost:11434") String baseUrl) {
+        try {
+            var request = java.net.http.HttpRequest.newBuilder()
+                    .uri(java.net.URI.create(baseUrl + "/api/tags"))
+                    .GET().timeout(java.time.Duration.ofSeconds(5)).build();
+            var response = java.net.http.HttpClient.newHttpClient()
+                    .send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() == 200) {
+                var json = new com.fasterxml.jackson.databind.ObjectMapper().readTree(response.body());
+                var models = new java.util.ArrayList<String>();
+                json.path("models").forEach(m -> models.add(m.path("name").asText()));
+                return models;
+            }
+        } catch (Exception e) {
+            log.warn("Failed to list Ollama models: {}", e.getMessage());
+        }
+        return java.util.List.of();
+    }
+
     private String maskApiKey(String apiKey) {
         if (apiKey == null || apiKey.isBlank()) return "";
         if (apiKey.length() <= 8) return "••••";

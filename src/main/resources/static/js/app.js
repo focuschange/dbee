@@ -67,6 +67,7 @@ const api = {
         optimizeSql: (connectionId, sql) => api.request('POST', '/api/llm/optimize-sql', { connectionId, message: sql }),
         analyzeResult: (message) => api.request('POST', '/api/llm/analyze-result', { connectionId: null, message }),
         indexHint: (connectionId, sql) => api.request('POST', '/api/llm/index-hint', { connectionId, message: sql }),
+        ollamaModels: (baseUrl) => api.request('GET', `/api/llm/ollama-models?baseUrl=${encodeURIComponent(baseUrl)}`),
         schemaReview: (connectionId, msg) => api.request('POST', '/api/llm/schema-review', { connectionId, message: msg }),
         alterSql: (connectionId, msg) => api.request('POST', '/api/llm/alter-sql', { connectionId, message: msg }),
     },
@@ -3565,6 +3566,26 @@ function updateAiProviderFields() {
         }
 
         keyRow.style.display = defaults.needsKey ? '' : 'none';
+
+        // Auto-detect Ollama models
+        if (provider === 'OLLAMA') {
+            const baseUrl = document.getElementById('ai-baseurl').value || defaults.baseUrl;
+            api.llm.ollamaModels(baseUrl).then(models => {
+                if (models && models.length > 0) {
+                    const modelInput = document.getElementById('ai-model');
+                    // Show available models as datalist
+                    let datalist = document.getElementById('ollama-models-list');
+                    if (!datalist) {
+                        datalist = document.createElement('datalist');
+                        datalist.id = 'ollama-models-list';
+                        document.body.appendChild(datalist);
+                        modelInput.setAttribute('list', 'ollama-models-list');
+                    }
+                    datalist.innerHTML = models.map(m => `<option value="${m}">`).join('');
+                    if (!models.includes(modelInput.value)) modelInput.value = models[0];
+                }
+            }).catch(() => {});
+        }
     }
 }
 
