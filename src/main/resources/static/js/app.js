@@ -2729,7 +2729,34 @@ function closeAiChatPanel() {
     document.getElementById('ai-chat-panel').style.display = 'none';
 }
 
+function saveAiChatHistory() {
+    const msgs = document.getElementById('ai-chat-messages');
+    if (!msgs) return;
+    const items = [];
+    msgs.querySelectorAll('.ai-chat-msg').forEach(m => {
+        if (m.classList.contains('ai-chat-msg-loading')) return;
+        const role = m.classList.contains('ai-chat-msg-user') ? 'user'
+            : m.classList.contains('ai-chat-msg-error') ? 'error' : 'assistant';
+        const content = m.querySelector('.ai-msg-content')?.textContent || '';
+        const sql = m.querySelector('.ai-sql-code')?.textContent || null;
+        items.push({ role, content, sql });
+    });
+    try { localStorage.setItem('dbee-ai-chat', JSON.stringify(items.slice(-50))); } catch (e) {}
+}
+
+function loadAiChatHistory() {
+    try {
+        const items = JSON.parse(localStorage.getItem('dbee-ai-chat') || '[]');
+        if (items.length === 0) return;
+        const container = document.getElementById('ai-chat-messages');
+        const welcome = container.querySelector('.ai-chat-welcome');
+        if (welcome) welcome.remove();
+        items.forEach(item => appendChatMessage(item.role, item.content, item.sql));
+    } catch (e) {}
+}
+
 function clearAiChat() {
+    try { localStorage.removeItem('dbee-ai-chat'); } catch (e) {}
     const container = document.getElementById('ai-chat-messages');
     container.innerHTML = `
         <div class="ai-chat-welcome">
@@ -2803,6 +2830,8 @@ function appendChatMessage(role, content, sql) {
 
     container.appendChild(msgDiv);
     container.scrollTop = container.scrollHeight;
+    // Auto-save chat history (skip loading messages)
+    if (role !== 'loading') setTimeout(saveAiChatHistory, 100);
     return msgDiv;
 }
 
@@ -2891,6 +2920,9 @@ function initAiChat() {
         chatInput.style.height = 'auto';
         chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
     };
+
+    // Restore chat history from localStorage
+    loadAiChatHistory();
 }
 
 // ============================================================
