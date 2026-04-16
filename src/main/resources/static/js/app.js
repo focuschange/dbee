@@ -39,6 +39,10 @@ const api = {
             api.request('POST', '/api/query/explain', { connectionId, sql, analyze }),
         updateCell: (connectionId, schema, table, primaryKeys, column, value) =>
             api.request('POST', '/api/query/update-cell', { connectionId, schema, table, primaryKeys, column, value }),
+        deleteRow: (connectionId, schema, table, primaryKeys) =>
+            api.request('POST', '/api/query/delete-row', { connectionId, schema, table, primaryKeys }),
+        insertRow: (connectionId, schema, table, values) =>
+            api.request('POST', '/api/query/insert-row', { connectionId, schema, table, values }),
     },
     metadata: {
         schemas: (connId) => api.request('GET', `/api/metadata/${connId}/schemas`),
@@ -1279,6 +1283,14 @@ function renderResultTable(rows, totalRows) {
         };
     });
 
+    // Row selection for delete
+    container.querySelectorAll('.result-table tbody tr').forEach(tr => {
+        tr.onclick = () => {
+            container.querySelectorAll('.result-table tbody tr.row-selected').forEach(r => r.classList.remove('row-selected'));
+            tr.classList.add('row-selected');
+        };
+    });
+
     // Attach cell click for full value viewer
     container.querySelectorAll('.result-table tbody td').forEach(td => {
         td.onclick = (e) => {
@@ -1331,11 +1343,13 @@ function renderResultTable(rows, totalRows) {
     const summary = document.getElementById('result-summary');
     if (summary && totalRows !== undefined) {
         const timeMs = state.resultData.executionTimeMs;
-        const editLabel = editable ? ' | Editable' : '';
         if (keyword && rows.length !== totalRows) {
-            summary.textContent = `${rows.length} / ${totalRows} rows in ${timeMs}ms${editLabel}`;
+            summary.innerHTML = `${rows.length} / ${totalRows} rows in ${timeMs}ms`;
         } else {
-            summary.textContent = `${rows.length} rows in ${timeMs}ms${editLabel}`;
+            summary.innerHTML = `${rows.length} rows in ${timeMs}ms`;
+        }
+        if (editable) {
+            summary.innerHTML += ` | <span class="edit-actions"><button class="btn-link" onclick="addNewRow()">+ Add Row</button> <button class="btn-link btn-link-danger" onclick="deleteSelectedRow()">- Delete Row</button></span>`;
         }
     }
 }
@@ -1484,6 +1498,63 @@ async function performCellUpdate(rowIdx, colIdx, newValue) {
 
     const column = columnNames[colIdx];
     return await api.query.updateCell(state.activeConnectionId, schemaName, tableName, primaryKeys, column, newValue);
+}
+
+async function addNewRow() {
+    if (!state.resultData?.tableName) return;
+    const { columnNames, schemaName, tableName } = state.resultData;
+    const values = {};
+    for (const col of columnNames) {
+        const val = prompt(`Value for "${col}" (leave empty for NULL):`);
+        if (val === null) return; // cancelled
+        values[col] = val === '' ? null : val;
+    }
+    try {
+        const result = await api.query.insertRow(state.activeConnectionId, schemaName, tableName, values);
+        if (result.error) {
+            updateStatus('Insert failed: ' + result.errorMessage, true);
+        } else {
+            updateStatus('Row inserted. Re-executing query...');
+            executeQuery(); // refresh
+        }
+    } catch (e) { updateStatus('Insert failed: ' + e.message, true); }
+}
+
+async function deleteSelectedRow() {
+    if (!state.resultData?.tableName) return;
+    const { schemaName, tableName, columnNames } = state.resultData;
+
+    // Find selected row (last clicked)
+    const activeRow = document.querySelector('.result-table tbody tr.row-selected');
+    if (!activeRow) { updateStatus('Click a row first to select it for deletion', true); return; }
+    if (!confirm('Delete the selected row?')) return;
+
+    const rowIdx = parseInt(activeRow.dataset.rowIdx);
+    const row = state.resultData.rows[rowIdx];
+    if (!row) return;
+
+    // Get PKs
+    if (!state.primaryKeyCache) {
+        const pks = await api.metadata.primaryKeys(state.activeConnectionId, schemaName, tableName);
+        if (!pks || pks.length === 0) { updateStatus('No primary key found', true); return; }
+        state.primaryKeyCache = pks.map(pk => pk.columnName);
+    }
+    const primaryKeys = {};
+    for (const pkCol of state.primaryKeyCache) {
+        const pkIdx = columnNames.indexOf(pkCol);
+        if (pkIdx === -1) { updateStatus(`PK column "${pkCol}" not in result`, true); return; }
+        primaryKeys[pkCol] = row[pkIdx];
+    }
+
+    try {
+        const result = await api.query.deleteRow(state.activeConnectionId, schemaName, tableName, primaryKeys);
+        if (result.error) {
+            updateStatus('Delete failed: ' + result.errorMessage, true);
+        } else {
+            updateStatus('Row deleted. Re-executing query...');
+            executeQuery();
+        }
+    } catch (e) { updateStatus('Delete failed: ' + e.message, true); }
 }
 
 async function askAiToFix(errorMsg) {

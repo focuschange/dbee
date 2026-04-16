@@ -139,6 +139,78 @@ public class QueryService {
         }
     }
 
+    public QueryResult deleteRow(String connectionId, String schema, String table,
+                                  Map<String, Object> primaryKeys) {
+        if (primaryKeys == null || primaryKeys.isEmpty()) {
+            return QueryResult.ofError("No primary key provided for delete", 0);
+        }
+
+        ConnectionInfo info = connectionService.getConnection(connectionId);
+        DataSource ds = connectionManager.getOrCreate(info);
+        String qualifiedTable = qualifyTable(schema, table);
+
+        StringJoiner whereJoiner = new StringJoiner(" AND ");
+        for (String pkCol : primaryKeys.keySet()) {
+            whereJoiner.add(quoteIdentifier(pkCol) + " = ?");
+        }
+
+        String sql = "DELETE FROM " + qualifiedTable + " WHERE " + whereJoiner;
+        long start = System.currentTimeMillis();
+        try (Connection conn = ds.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            int idx = 1;
+            for (Object pkVal : primaryKeys.values()) {
+                ps.setObject(idx++, pkVal);
+            }
+            int affected = ps.executeUpdate();
+            return QueryResult.ofUpdate(affected, System.currentTimeMillis() - start);
+        } catch (SQLException e) {
+            return QueryResult.ofError(e.getMessage(), System.currentTimeMillis() - start);
+        }
+    }
+
+    public QueryResult insertRow(String connectionId, String schema, String table,
+                                  Map<String, Object> values) {
+        if (values == null || values.isEmpty()) {
+            return QueryResult.ofError("No values provided for insert", 0);
+        }
+
+        ConnectionInfo info = connectionService.getConnection(connectionId);
+        DataSource ds = connectionManager.getOrCreate(info);
+        String qualifiedTable = qualifyTable(schema, table);
+
+        StringJoiner cols = new StringJoiner(", ");
+        StringJoiner placeholders = new StringJoiner(", ");
+        for (String col : values.keySet()) {
+            cols.add(quoteIdentifier(col));
+            placeholders.add("?");
+        }
+
+        String sql = "INSERT INTO " + qualifiedTable + " (" + cols + ") VALUES (" + placeholders + ")";
+        long start = System.currentTimeMillis();
+        try (Connection conn = ds.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            int idx = 1;
+            for (Object val : values.values()) {
+                if (val == null || "null".equalsIgnoreCase(String.valueOf(val))) {
+                    ps.setObject(idx++, null);
+                } else {
+                    ps.setObject(idx++, val);
+                }
+            }
+            int affected = ps.executeUpdate();
+            return QueryResult.ofUpdate(affected, System.currentTimeMillis() - start);
+        } catch (SQLException e) {
+            return QueryResult.ofError(e.getMessage(), System.currentTimeMillis() - start);
+        }
+    }
+
+    private String qualifyTable(String schema, String table) {
+        return (schema != null && !schema.isEmpty())
+                ? quoteIdentifier(schema) + "." + quoteIdentifier(table)
+                : quoteIdentifier(table);
+    }
+
     private String quoteIdentifier(String name) {
         return "`" + name.replace("`", "``") + "`";
     }

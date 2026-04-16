@@ -3,6 +3,8 @@ package com.dbee.controller;
 import com.dbee.controller.dto.ExplainRequest;
 import com.dbee.controller.dto.QueryRequest;
 import com.dbee.controller.dto.QueryResultDto;
+import com.dbee.controller.dto.DeleteRowRequest;
+import com.dbee.controller.dto.InsertRowRequest;
 import com.dbee.controller.dto.UpdateCellRequest;
 import com.dbee.model.QueryResult;
 import com.dbee.service.QueryService;
@@ -119,6 +121,20 @@ public class QueryController {
         QueryResult result = queryService.updateCell(
                 request.connectionId(), request.schema(), request.table(),
                 request.primaryKeys(), request.column(), request.value());
+        return QueryResultDto.from(result);
+    }
+
+    @PostMapping("/delete-row")
+    public QueryResultDto deleteRow(@RequestBody DeleteRowRequest request) {
+        QueryResult result = queryService.deleteRow(
+                request.connectionId(), request.schema(), request.table(), request.primaryKeys());
+        return QueryResultDto.from(result);
+    }
+
+    @PostMapping("/insert-row")
+    public QueryResultDto insertRow(@RequestBody InsertRowRequest request) {
+        QueryResult result = queryService.insertRow(
+                request.connectionId(), request.schema(), request.table(), request.values());
         return QueryResultDto.from(result);
     }
 }

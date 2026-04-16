@@ -823,6 +823,17 @@ kbd {
     opacity: 0.6;
 }
 
+/* Row selection & edit actions */
+.result-table tbody tr.row-selected { background: var(--accent-subtle) !important; }
+.edit-actions { display: inline; }
+.btn-link {
+    background: none; border: none; color: var(--accent); cursor: pointer;
+    font-size: 12px; padding: 0 4px; text-decoration: underline;
+}
+.btn-link:hover { color: var(--accent-hover); }
+.btn-link-danger { color: var(--error); }
+.btn-link-danger:hover { color: #ff4444; }
+
 /* Cell viewer */
 .cell-viewer-body { padding: 0 20px 12px; }
 .cell-viewer-content {
