@@ -61,6 +61,7 @@
             <div class="menu-item">
                 <button class="menu-trigger">View</button>
                 <div class="menu-dropdown">
+                    <button class="menu-action" id="btn-toggle-toolbar" onclick="toggleIconToolbar()">Hide Toolbar</button>
                     <button class="menu-action" onclick="showCommandPalette()">Command Palette <span class="menu-shortcut">Ctrl+P</span></button>
                     <div class="menu-separator"></div>
                     <div class="menu-label">Theme</div>
@@ -82,6 +83,41 @@
             <span class="badge-dot"></span>
             <span class="badge-text">No connection</span>
         </div>
+    </div>
+
+    <!-- Icon Toolbar (below menu bar) -->
+    <div id="icon-toolbar">
+        <button class="tb-btn" onclick="document.getElementById('btn-add-conn').click()" title="New Connection">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+        </button>
+        <div class="tb-sep"></div>
+        <button class="tb-btn tb-btn-run" onclick="executeQuery()" title="Run (Ctrl+Enter)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        </button>
+        <button class="tb-btn" onclick="executeExplain(false)" title="Explain (Ctrl+E)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        </button>
+        <button class="tb-btn" onclick="formatSql()" title="Format (Ctrl+Shift+F)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="21" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="21" y1="18" x2="3" y2="18"/></svg>
+        </button>
+        <div class="tb-sep"></div>
+        <button class="tb-btn" onclick="saveCurrentQuery()" title="Save Query (Ctrl+S)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+        </button>
+        <button class="tb-btn" onclick="exportData('csv')" title="Export CSV (Alt+X)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </button>
+        <div class="tb-sep"></div>
+        <button class="tb-btn" onclick="addEditorTab()" title="New Tab (Alt+N)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+        <button class="tb-btn" onclick="showHistoryDialog()" title="History (Alt+H)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </button>
+        <div class="tb-sep"></div>
+        <button class="tb-btn" onclick="toggleAiChatPanel()" title="AI Chat (Ctrl+Shift+A)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        </button>
     </div>
 
     <!-- Main Layout -->

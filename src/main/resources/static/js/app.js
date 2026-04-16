@@ -2888,6 +2888,33 @@ function initCommandPalette() {
 }
 
 // ============================================================
+// Icon Toolbar Toggle
+// ============================================================
+function toggleIconToolbar() {
+    const tb = document.getElementById('icon-toolbar');
+    const btn = document.getElementById('btn-toggle-toolbar');
+    if (tb.style.display === 'none') {
+        tb.style.display = 'flex';
+        btn.textContent = 'Hide Toolbar';
+        localStorage.setItem('dbee-toolbar-visible', 'true');
+    } else {
+        tb.style.display = 'none';
+        btn.textContent = 'Show Toolbar';
+        localStorage.setItem('dbee-toolbar-visible', 'false');
+    }
+}
+
+function restoreToolbarState() {
+    const visible = localStorage.getItem('dbee-toolbar-visible');
+    const tb = document.getElementById('icon-toolbar');
+    const btn = document.getElementById('btn-toggle-toolbar');
+    if (visible === 'false') {
+        tb.style.display = 'none';
+        if (btn) btn.textContent = 'Show Toolbar';
+    }
+}
+
+// ============================================================
 // AI SQL Assistants (#40, #41, #42)
 // ============================================================
 async function aiExplainSql() {
@@ -3566,6 +3593,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initTunnelManager();
     initNotesManager();
     initHistoryManager();
+    restoreToolbarState();
     initCommandPalette();
     initSavedQueries();
     initAiChat();
