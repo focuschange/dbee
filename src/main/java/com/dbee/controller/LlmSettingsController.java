@@ -299,6 +299,18 @@ public class LlmSettingsController {
 
     @GetMapping("/ollama-models")
     public java.util.List<String> ollamaModels(@RequestParam(defaultValue = "http://localhost:11434") String baseUrl) {
+        // SSRF protection: only allow localhost URLs
+        try {
+            var uri = java.net.URI.create(baseUrl);
+            String host = uri.getHost();
+            if (host == null || !(host.equals("localhost") || host.equals("127.0.0.1") || host.equals("::1"))) {
+                log.warn("SSRF blocked: attempted access to non-localhost URL: {}", baseUrl);
+                return java.util.List.of();
+            }
+        } catch (Exception e) {
+            return java.util.List.of();
+        }
+
         try {
             var request = java.net.http.HttpRequest.newBuilder()
                     .uri(java.net.URI.create(baseUrl + "/api/tags"))

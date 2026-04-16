@@ -1,6 +1,7 @@
 package com.dbee.controller;
 
 import com.dbee.config.AppSecurityConfig;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -20,9 +21,12 @@ public class AppSecurityController {
     }
 
     @PostMapping("/verify")
-    public Map<String, Object> verify(@RequestBody Map<String, String> body) {
+    public Map<String, Object> verify(@RequestBody Map<String, String> body, HttpServletRequest request) {
         String pin = body.get("pin");
         boolean ok = config.verify(pin);
+        if (ok) {
+            request.getSession(true).setAttribute("dbee-authenticated", true);
+        }
         return Map.of("verified", ok);
     }
 

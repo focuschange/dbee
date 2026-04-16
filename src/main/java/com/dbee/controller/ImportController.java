@@ -60,25 +60,26 @@ public class ImportController {
         String colList = String.join(", ", Arrays.stream(columns).map(c -> "`" + c.trim() + "`").toList());
         String placeholders = String.join(", ", Arrays.stream(columns).map(c -> "?").toList());
 
+        // Validate table name: only allow alphanumeric + underscore
+        if (!table.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
+            return Map.of("success", false, "message", "Invalid table name");
+        }
+
         int inserted = 0;
         String line;
         List<String> errors = new ArrayList<>();
 
+        // Use parameterized INSERT via QueryService.insertRow
         while ((line = reader.readLine()) != null) {
             if (line.trim().isEmpty()) continue;
             String[] values = parseCsvLine(line);
-            StringBuilder valStr = new StringBuilder();
-            for (int i = 0; i < values.length; i++) {
-                if (i > 0) valStr.append(", ");
+            Map<String, Object> rowValues = new java.util.LinkedHashMap<>();
+            for (int i = 0; i < Math.min(columns.length, values.length); i++) {
                 String v = values[i].trim();
-                if (v.isEmpty() || v.equalsIgnoreCase("null")) {
-                    valStr.append("NULL");
-                } else {
-                    valStr.append("'").append(v.replace("'", "''")).append("'");
-                }
+                rowValues.put(columns[i].trim(), v.isEmpty() || v.equalsIgnoreCase("null") ? null : v);
             }
-            String sql = "INSERT INTO `" + table + "` (" + colList + ") VALUES (" + valStr + ")";
-            QueryResult result = queryService.execute(connectionId, sql, 1);
+            // Use insertRow which uses PreparedStatement with parameter binding
+            QueryResult result = queryService.insertRow(connectionId, null, table, rowValues);
             if (result.isError()) {
                 errors.add(result.getErrorMessage());
             } else {

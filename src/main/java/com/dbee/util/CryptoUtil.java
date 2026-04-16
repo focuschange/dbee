@@ -24,19 +24,37 @@ public class CryptoUtil {
     private static final String PREFIX = "ENC(";
     private static final String SUFFIX = ")";
 
-    // Derive a stable key from machine-specific info
-    private static final SecretKey SECRET_KEY = deriveKey();
+    // Load or generate a random master key stored in ~/.dbee/.master-key
+    private static final SecretKey SECRET_KEY = loadOrCreateMasterKey();
 
-    private static SecretKey deriveKey() {
+    private static SecretKey loadOrCreateMasterKey() {
         try {
-            String seed = System.getProperty("user.name") + "@" + System.getProperty("user.home") + "/dbee";
-            byte[] salt = "DBee-Salt-2026".getBytes(StandardCharsets.UTF_8);
-            KeySpec spec = new PBEKeySpec(seed.toCharArray(), salt, ITERATIONS, KEY_LENGTH);
-            SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
-            byte[] keyBytes = factory.generateSecret(spec).getEncoded();
+            java.nio.file.Path keyFile = java.nio.file.Path.of(
+                    System.getProperty("user.home"), ".dbee", ".master-key");
+            java.nio.file.Files.createDirectories(keyFile.getParent());
+
+            byte[] keyBytes;
+            if (java.nio.file.Files.exists(keyFile)) {
+                // Load existing key
+                keyBytes = Base64.getDecoder().decode(
+                        java.nio.file.Files.readString(keyFile).trim());
+            } else {
+                // Generate new random 256-bit key
+                keyBytes = new byte[32];
+                new SecureRandom().nextBytes(keyBytes);
+                java.nio.file.Files.writeString(keyFile,
+                        Base64.getEncoder().encodeToString(keyBytes));
+                // Restrict file permissions (best-effort on supported OS)
+                try {
+                    keyFile.toFile().setReadable(false, false);
+                    keyFile.toFile().setReadable(true, true);
+                    keyFile.toFile().setWritable(false, false);
+                    keyFile.toFile().setWritable(true, true);
+                } catch (Exception ignored) {}
+            }
             return new SecretKeySpec(keyBytes, "AES");
         } catch (Exception e) {
-            throw new RuntimeException("Failed to derive encryption key", e);
+            throw new RuntimeException("Failed to load/create master encryption key", e);
         }
     }
 
@@ -92,7 +110,9 @@ public class CryptoUtil {
             byte[] plaintext = cipher.doFinal(ciphertext);
             return new String(plaintext, StandardCharsets.UTF_8);
         } catch (Exception e) {
-            throw new RuntimeException("Decryption failed", e);
+            // If decryption fails (e.g., key changed), return empty string
+            // The password will need to be re-entered
+            return "";
         }
     }
 

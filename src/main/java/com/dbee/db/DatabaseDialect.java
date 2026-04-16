@@ -40,4 +40,12 @@ public interface DatabaseDialect {
     default String getShowCreateTableQuery(String schema, String table) {
         return null;
     }
+
+    /**
+     * Quote an identifier (table/column name) for this dialect.
+     */
+    default String quoteIdentifier(String name) {
+        // Default: ANSI SQL double-quotes
+        return "\"" + name.replace("\"", "\"\"") + "\"";
+    }
 }

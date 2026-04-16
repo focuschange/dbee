@@ -23,6 +23,11 @@ public class MSSQLDialect implements DatabaseDialect {
     }
 
     @Override
+    public String quoteIdentifier(String name) {
+        return "[" + name.replace("]", "]]") + "]";
+    }
+
+    @Override
     public String getExplainQuery(String sql) {
         // MSSQL uses SET SHOWPLAN_ALL ON before the query
         return "SET SHOWPLAN_ALL ON";

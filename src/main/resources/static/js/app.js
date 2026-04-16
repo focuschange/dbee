@@ -1136,14 +1136,14 @@ async function showErDiagram(connId, schema) {
         content.innerHTML = `<div style="margin-bottom:10px;text-align:right;">
             <button class="btn btn-ghost btn-sm" onclick="exportErSvg()">Export SVG</button>
             <button class="btn btn-ghost btn-sm" onclick="exportErPng()">Export PNG</button>
-        </div><div class="mermaid">${result.mermaid}</div>`;
+        </div><div class="mermaid">${escapeHtml(result.mermaid)}</div>`;
         if (window.mermaid) {
             mermaid.initialize({ startOnLoad: false, theme: document.body.dataset.theme === 'light' ? 'default' : 'dark' });
             await mermaid.run({ nodes: content.querySelectorAll('.mermaid') });
             attachErDiagramClickHandlers(connId, schema);
         }
     } catch (e) {
-        content.innerHTML = `<div style="color:var(--error);padding:20px;">Failed: ${e.message}</div>`;
+        content.innerHTML = `<div style="color:var(--error);padding:20px;">Failed: ${escapeHtml(e.message)}</div>`;
     }
 }
 
@@ -1458,12 +1458,15 @@ function displayResult(result, resultLabel) {
         const sql = state.lastResult?.sql || getCurrentSql();
         container.innerHTML = `<div class="result-error">
             <div class="result-error-msg">${escapeHtml(result.errorMessage)}</div>
-            ${state.activeConnectionId ? `<button class="btn btn-ghost btn-sm ai-fix-btn" onclick="askAiToFix('${escapeHtml(result.errorMessage).replace(/'/g, "\\'")}')">
+            ${state.activeConnectionId ? `<button class="btn btn-ghost btn-sm ai-fix-btn">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 2.8 4 6 4 6s4-3.2 4-6a4 4 0 0 0-4-4z"/><circle cx="12" cy="6" r="1.5"/></svg>
                 Ask AI to Fix
             </button>` : ''}
             <div id="ai-fix-result" style="display:none;"></div>
         </div>`;
+        // Safe event binding (no inline onclick)
+        const fixBtn = container.querySelector('.ai-fix-btn');
+        if (fixBtn) fixBtn.addEventListener('click', () => askAiToFix(result.errorMessage));
         updateStatus(result.errorMessage, true);
         state.resultData = null;
         state.lastError = { sql, errorMessage: result.errorMessage };
@@ -2114,12 +2117,14 @@ function displayError(msg) {
     const sql = getCurrentSql();
     container.innerHTML = `<div class="result-error">
         <div class="result-error-msg">${escapeHtml(msg)}</div>
-        ${state.activeConnectionId ? `<button class="btn btn-ghost btn-sm ai-fix-btn" onclick="askAiToFix('${escapeHtml(msg).replace(/'/g, "\\'")}')">
+        ${state.activeConnectionId ? `<button class="btn btn-ghost btn-sm ai-fix-btn">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 2.8 4 6 4 6s4-3.2 4-6a4 4 0 0 0-4-4z"/><circle cx="12" cy="6" r="1.5"/></svg>
             Ask AI to Fix
         </button>` : ''}
         <div id="ai-fix-result" style="display:none;"></div>
     </div>`;
+    const fixBtn = container.querySelector('.ai-fix-btn');
+    if (fixBtn) fixBtn.addEventListener('click', () => askAiToFix(msg));
     updateStatus(msg, true);
     state.lastError = { sql, errorMessage: msg };
 }
@@ -4077,7 +4082,7 @@ async function loadSavedQueries() {
             };
         });
     } catch (e) {
-        list.innerHTML = `<div class="history-empty">Failed to load: ${e.message}</div>`;
+        list.innerHTML = `<div class="history-empty">Failed to load: ${escapeHtml(e.message)}</div>`;
     }
 }
 
@@ -4227,7 +4232,7 @@ async function showHistoryStats() {
         html += '</div>';
         list.innerHTML = html;
     } catch (e) {
-        list.innerHTML = `<div class="history-empty">Failed to load stats: ${e.message}</div>`;
+        list.innerHTML = `<div class="history-empty">Failed to load stats: ${escapeHtml(e.message)}</div>`;
     }
 }
 

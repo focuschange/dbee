@@ -37,7 +37,9 @@ public class AppSecurityConfig {
             if (pin == null || pin.isBlank()) {
                 Files.deleteIfExists(CONFIG_FILE);
             } else {
-                mapper.writeValue(CONFIG_FILE.toFile(), Map.of("pin", pin));
+                // Store as SHA-256 hash instead of plaintext
+                String hash = hashPin(pin);
+                mapper.writeValue(CONFIG_FILE.toFile(), Map.of("pin", hash));
             }
         } catch (IOException e) {
             log.error("Failed to save app security config", e);
@@ -50,7 +52,23 @@ public class AppSecurityConfig {
     }
 
     public boolean verify(String input) {
-        String pin = getPin();
-        return pin != null && pin.equals(input);
+        String storedHash = getPin();
+        if (storedHash == null || input == null) return false;
+        // Constant-time comparison of hashes
+        String inputHash = hashPin(input);
+        return java.security.MessageDigest.isEqual(
+                storedHash.getBytes(), inputHash.getBytes());
+    }
+
+    private String hashPin(String pin) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] hash = md.digest(("DBee-PIN-Salt:" + pin).getBytes());
+            StringBuilder hex = new StringBuilder();
+            for (byte b : hash) hex.append(String.format("%02x", b));
+            return hex.toString();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to hash PIN", e);
+        }
     }
 }

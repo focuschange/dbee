@@ -233,6 +233,12 @@ public class QueryService {
     }
 
     private String quoteIdentifier(String name) {
-        return "`" + name.replace("`", "``") + "`";
+        // Default ANSI quoting — use dialect-specific when connection context available
+        return "\"" + name.replace("\"", "\"\"") + "\"";
+    }
+
+    private String quoteIdentifier(String name, ConnectionInfo info) {
+        DatabaseDialect dialect = DialectFactory.getDialect(info.getDatabaseType());
+        return dialect.quoteIdentifier(name);
     }
 }

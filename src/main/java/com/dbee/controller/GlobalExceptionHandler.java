@@ -24,7 +24,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, String>> handleSql(SQLException e) {
         log.error("SQL error: {}", e.getMessage());
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("error", "Database error: " + e.getMessage()));
+                .body(Map.of("error", "A database error occurred. Check server logs for details."));
     }
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)
@@ -35,9 +35,17 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<Map<String, String>> handleRuntime(RuntimeException e) {
         log.error("Runtime error: {}", e.getMessage(), e);
-        String msg = e.getMessage() != null ? e.getMessage() : "Internal server error";
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("error", msg));
+                .body(Map.of("error", sanitizeErrorMessage(e.getMessage())));
+    }
+
+    /** Strip potentially sensitive info from error messages */
+    private String sanitizeErrorMessage(String msg) {
+        if (msg == null) return "Internal server error";
+        // Remove API keys, file paths, connection strings
+        return msg.replaceAll("(sk-|sk-ant-)[\\w-]+", "***")
+                  .replaceAll("/[\\w/.-]+\\.\\w+", "[path]")
+                  .replaceAll("jdbc:[^\\s]+", "[jdbc-url]");
     }
 
     @ExceptionHandler(Exception.class)

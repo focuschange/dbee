@@ -38,6 +38,11 @@ public class MySQLDialect implements DatabaseDialect {
     }
 
     @Override
+    public String quoteIdentifier(String name) {
+        return "`" + name.replace("`", "``") + "`";
+    }
+
+    @Override
     public String getShowCreateTableQuery(String schema, String table) {
         return "SHOW CREATE TABLE " + (schema != null ? "`" + schema + "`.`" + table + "`" : "`" + table + "`");
     }
