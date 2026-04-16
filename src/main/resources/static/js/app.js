@@ -199,6 +199,9 @@ function initMonaco() {
 
         // Create first tab
         addEditorTab();
+
+        // Restore editor settings
+        restoreEditorSettings();
     });
 }
 
@@ -2914,6 +2917,60 @@ function initCommandPalette() {
     document.addEventListener('click', (e) => {
         if (!e.target.closest('.command-palette')) hideCommandPalette();
     });
+}
+
+// ============================================================
+// Editor Settings
+// ============================================================
+function showEditorSettings() {
+    const s = JSON.parse(localStorage.getItem('dbee-editor-settings') || '{}');
+    document.getElementById('es-font-size').value = s.fontSize || 14;
+    document.getElementById('es-tab-size').value = s.tabSize || 4;
+    document.getElementById('es-word-wrap').value = s.wordWrap || 'off';
+    document.getElementById('es-minimap').value = s.minimap ?? 'false';
+    document.getElementById('es-line-numbers').value = s.lineNumbers || 'on';
+    document.getElementById('editor-settings-dialog').style.display = 'flex';
+    document.getElementById('editor-settings-close').onclick = closeEditorSettings;
+    document.getElementById('editor-settings-dialog').querySelector('.modal-backdrop').onclick = closeEditorSettings;
+}
+
+function closeEditorSettings() {
+    document.getElementById('editor-settings-dialog').style.display = 'none';
+}
+
+function applyEditorSettings() {
+    const s = {
+        fontSize: parseInt(document.getElementById('es-font-size').value),
+        tabSize: parseInt(document.getElementById('es-tab-size').value),
+        wordWrap: document.getElementById('es-word-wrap').value,
+        minimap: document.getElementById('es-minimap').value,
+        lineNumbers: document.getElementById('es-line-numbers').value,
+    };
+    localStorage.setItem('dbee-editor-settings', JSON.stringify(s));
+    if (monacoEditor) {
+        monacoEditor.updateOptions({
+            fontSize: s.fontSize,
+            tabSize: s.tabSize,
+            wordWrap: s.wordWrap,
+            minimap: { enabled: s.minimap === 'true' },
+            lineNumbers: s.lineNumbers,
+        });
+    }
+    closeEditorSettings();
+    updateStatus('Editor settings applied');
+}
+
+function restoreEditorSettings() {
+    const s = JSON.parse(localStorage.getItem('dbee-editor-settings') || '{}');
+    if (monacoEditor && Object.keys(s).length > 0) {
+        monacoEditor.updateOptions({
+            fontSize: s.fontSize || 14,
+            tabSize: s.tabSize || 4,
+            wordWrap: s.wordWrap || 'off',
+            minimap: { enabled: (s.minimap || 'false') === 'true' },
+            lineNumbers: s.lineNumbers || 'on',
+        });
+    }
 }
 
 // ============================================================
