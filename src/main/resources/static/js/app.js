@@ -3218,6 +3218,51 @@ FROM ${table};
 // ============================================================
 // DB Monitoring (#80, #81)
 // ============================================================
+async function publishToConfluence() {
+    const baseUrl = prompt('Confluence Base URL:', 'https://your-domain.atlassian.net/wiki');
+    if (!baseUrl) return;
+    const spaceKey = prompt('Space Key:', 'DEV');
+    if (!spaceKey) return;
+    const email = prompt('Atlassian Email:');
+    if (!email) return;
+    const apiToken = prompt('API Token:');
+    if (!apiToken) return;
+
+    const schema = state.autocompleteCache?.schemas?.[0]?.name || 'schema';
+    try {
+        const doc = await api.metadata.documentation(state.activeConnectionId, schema);
+        const content = doc.markdown.replace(/\n/g, '<br/>');
+        const result = await api.request('POST', '/api/integration/confluence/publish', {
+            baseUrl, spaceKey, title: `DBee Schema: ${schema}`, content, email, apiToken
+        });
+        if (result.success) updateStatus('Published to Confluence: ' + (result.pageUrl || ''));
+        else updateStatus('Confluence failed: ' + result.message, true);
+    } catch (e) { updateStatus('Failed: ' + e.message, true); }
+}
+
+async function createJiraIssue() {
+    const baseUrl = prompt('Jira Base URL:', 'https://your-domain.atlassian.net');
+    if (!baseUrl) return;
+    const projectKey = prompt('Project Key:', 'DB');
+    if (!projectKey) return;
+    const summary = prompt('Issue Summary:', 'Database query finding');
+    if (!summary) return;
+    const email = prompt('Atlassian Email:');
+    if (!email) return;
+    const apiToken = prompt('API Token:');
+    if (!apiToken) return;
+
+    const sql = getCurrentSql();
+    const description = `SQL Query:\n${sql}\n\nGenerated from DBee`;
+    try {
+        const result = await api.request('POST', '/api/integration/jira/create-issue', {
+            baseUrl, projectKey, summary, description, email, apiToken
+        });
+        if (result.success) updateStatus(`Jira issue created: ${result.issueKey}`);
+        else updateStatus('Jira failed: ' + result.message, true);
+    } catch (e) { updateStatus('Failed: ' + e.message, true); }
+}
+
 async function exportSchemaDoc() {
     if (!state.activeConnectionId) { updateStatus('No connection', true); return; }
     // Find current schema from autocomplete cache
