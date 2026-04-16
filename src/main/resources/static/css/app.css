@@ -1915,6 +1915,32 @@ kbd {
     overflow: hidden;
 }
 
+/* ---- Saved Queries ---- */
+.saved-query-item {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border-subtle);
+    cursor: default;
+}
+.saved-query-item:hover { background: var(--bg-hover); }
+.saved-query-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+}
+.saved-query-name { font-weight: 600; font-size: 13px; color: var(--text-primary); }
+.saved-query-actions { display: flex; gap: 4px; }
+.saved-query-sql {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 60px;
+    overflow: hidden;
+}
+
 /* ---- AI Chat Panel ---- */
 .ai-chat-panel {
     position: fixed;

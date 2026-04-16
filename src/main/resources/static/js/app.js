@@ -57,6 +57,12 @@ const api = {
         chat: (connectionId, message) => api.request('POST', '/api/llm/chat', { connectionId, message }),
         fixSql: (connectionId, sql, errorMessage) => api.request('POST', '/api/llm/fix-sql', { connectionId, sql, errorMessage }),
     },
+    savedQueries: {
+        list: () => api.request('GET', '/api/saved-queries'),
+        create: (query) => api.request('POST', '/api/saved-queries', query),
+        update: (id, query) => api.request('PUT', `/api/saved-queries/${id}`, query),
+        delete: (id) => api.request('DELETE', `/api/saved-queries/${id}`),
+    },
     tunnels: {
         list: () => api.request('GET', '/api/tunnels'),
         create: (info) => api.request('POST', '/api/tunnels', info),
@@ -1778,6 +1784,20 @@ function initEventHandlers() {
             return;
         }
 
+        // Ctrl/Cmd+S — Save current query
+        if (mod && e.key === 's') {
+            e.preventDefault();
+            saveCurrentQuery();
+            return;
+        }
+
+        // Alt+S — Show saved queries
+        if (e.altKey && e.key === 's') {
+            e.preventDefault();
+            showSavedQueriesDialog();
+            return;
+        }
+
         // Alt+H — Query History
         if (e.altKey && e.key === 'h') {
             e.preventDefault();
@@ -2470,6 +2490,91 @@ function initAiSettings() {
 }
 
 // ============================================================
+// Saved Queries
+// ============================================================
+async function saveCurrentQuery() {
+    const sql = getCurrentSql();
+    if (!sql.trim()) { updateStatus('No SQL to save', true); return; }
+    const name = prompt('Save query as:', 'My Query');
+    if (!name) return;
+    try {
+        await api.savedQueries.create({ name, sql, folder: '' });
+        updateStatus(`Query saved: ${name}`);
+    } catch (e) {
+        updateStatus('Failed to save query: ' + e.message, true);
+    }
+}
+
+async function showSavedQueriesDialog() {
+    const dialog = document.getElementById('saved-queries-dialog');
+    dialog.style.display = 'flex';
+    await loadSavedQueries();
+}
+
+function closeSavedQueriesDialog() {
+    document.getElementById('saved-queries-dialog').style.display = 'none';
+}
+
+async function loadSavedQueries() {
+    const list = document.getElementById('saved-queries-list');
+    try {
+        const queries = await api.savedQueries.list();
+        if (queries.length === 0) {
+            list.innerHTML = '<div class="history-empty">No saved queries yet. Use Ctrl+S to save.</div>';
+            return;
+        }
+        list.innerHTML = queries.sort((a, b) => b.updatedAt - a.updatedAt).map(q => `
+            <div class="saved-query-item" data-id="${q.id}">
+                <div class="saved-query-header">
+                    <span class="saved-query-name">${escapeHtml(q.name)}</span>
+                    <div class="saved-query-actions">
+                        <button class="btn-icon sq-load" title="Load to editor">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/></svg>
+                        </button>
+                        <button class="btn-icon sq-delete" title="Delete" style="color:var(--error)">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <pre class="saved-query-sql">${escapeHtml(q.sql.substring(0, 200))}${q.sql.length > 200 ? '...' : ''}</pre>
+            </div>
+        `).join('');
+
+        // Attach handlers
+        list.querySelectorAll('.sq-load').forEach(btn => {
+            btn.onclick = () => {
+                const id = btn.closest('.saved-query-item').dataset.id;
+                const q = queries.find(x => x.id === id);
+                if (q && monacoEditor) {
+                    monacoEditor.setValue(q.sql);
+                    monacoEditor.focus();
+                    closeSavedQueriesDialog();
+                    updateStatus(`Loaded: ${q.name}`);
+                }
+            };
+        });
+        list.querySelectorAll('.sq-delete').forEach(btn => {
+            btn.onclick = async () => {
+                const id = btn.closest('.saved-query-item').dataset.id;
+                if (confirm('Delete this saved query?')) {
+                    await api.savedQueries.delete(id);
+                    loadSavedQueries();
+                }
+            };
+        });
+    } catch (e) {
+        list.innerHTML = `<div class="history-empty">Failed to load: ${e.message}</div>`;
+    }
+}
+
+function initSavedQueries() {
+    document.getElementById('btn-save-query').onclick = saveCurrentQuery;
+    document.getElementById('btn-saved-queries').onclick = showSavedQueriesDialog;
+    document.getElementById('saved-queries-dialog-close').onclick = closeSavedQueriesDialog;
+    document.getElementById('saved-queries-dialog').querySelector('.modal-backdrop').onclick = closeSavedQueriesDialog;
+}
+
+// ============================================================
 // Query History
 // ============================================================
 function showHistoryDialog() {
@@ -2619,6 +2724,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initTunnelManager();
     initNotesManager();
     initHistoryManager();
+    initSavedQueries();
     initAiChat();
     initAiSettings();
     initResizers();

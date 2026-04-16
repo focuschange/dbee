@@ -131,6 +131,14 @@
         </div>
         <div class="toolbar-divider"></div>
         <div class="toolbar-group">
+            <button id="btn-save-query" class="btn btn-ghost" title="Save Query (Ctrl+S)">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                Save
+            </button>
+            <button id="btn-saved-queries" class="btn btn-ghost" title="Saved Queries (Alt+S)">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                Saved
+            </button>
             <button id="btn-history" class="btn btn-ghost" title="Query History (Alt+H)">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                 History
@@ -506,6 +514,25 @@
                     <button id="btn-clear-history" class="btn btn-ghost btn-sm" style="color:var(--error)" title="Clear All History">Clear All</button>
                 </div>
                 <div id="history-list" class="history-list"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Saved Queries Modal -->
+    <div id="saved-queries-dialog" class="modal" style="display:none;">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content modal-history">
+            <div class="modal-header">
+                <h3>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                    Saved Queries
+                </h3>
+                <button class="modal-close" id="saved-queries-dialog-close">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="history-body">
+                <div id="saved-queries-list" class="history-list"></div>
             </div>
         </div>
     </div>
