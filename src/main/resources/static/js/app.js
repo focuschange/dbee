@@ -2227,6 +2227,13 @@ function initEventHandlers() {
             return;
         }
 
+        // Ctrl/Cmd+P — Command Palette
+        if (mod && e.key === 'p') {
+            e.preventDefault();
+            showCommandPalette();
+            return;
+        }
+
         // Ctrl/Cmd+Shift+F — Format SQL
         if (mod && e.shiftKey && e.key === 'F') {
             e.preventDefault();
@@ -2660,6 +2667,88 @@ function initNotesManager() {
     document.getElementById('btn-add-note').onclick = createNote;
     document.getElementById('btn-save-note').onclick = saveNote;
     document.getElementById('btn-delete-note').onclick = deleteNote;
+}
+
+// ============================================================
+// Command Palette
+// ============================================================
+const CMD_PALETTE_COMMANDS = [
+    { name: 'Run Query', shortcut: 'Ctrl+Enter', action: executeQuery },
+    { name: 'Explain', shortcut: 'Ctrl+E', action: () => executeExplain(false) },
+    { name: 'Explain Analyze', shortcut: 'Ctrl+Shift+E', action: () => executeExplain(true) },
+    { name: 'Format SQL', shortcut: 'Ctrl+Shift+F', action: formatSql },
+    { name: 'Save Query', shortcut: 'Ctrl+S', action: saveCurrentQuery },
+    { name: 'Saved Queries', shortcut: 'Alt+S', action: showSavedQueriesDialog },
+    { name: 'New Tab', shortcut: 'Alt+N', action: () => addEditorTab() },
+    { name: 'Export CSV', action: () => exportData('csv') },
+    { name: 'Export JSON', action: () => exportData('json') },
+    { name: 'Export Excel', action: () => exportData('xlsx') },
+    { name: 'Export SQL INSERT', action: () => exportData('insert') },
+    { name: 'Query History', shortcut: 'Alt+H', action: showHistoryDialog },
+    { name: 'AI Chat', shortcut: 'Ctrl+Shift+A', action: toggleAiChatPanel },
+    { name: 'AI Settings', action: showAiSettingsDialog },
+    { name: 'AI: Explain SQL', action: aiExplainSql },
+    { name: 'AI: Optimize SQL', action: aiOptimizeSql },
+    { name: 'AI: Analyze Results', action: aiAnalyzeResult },
+];
+
+function showCommandPalette() {
+    const palette = document.getElementById('command-palette');
+    const input = document.getElementById('cmd-palette-input');
+    palette.style.display = 'block';
+    input.value = '';
+    input.focus();
+    renderPaletteCommands('');
+}
+
+function hideCommandPalette() {
+    document.getElementById('command-palette').style.display = 'none';
+}
+
+function renderPaletteCommands(filter) {
+    const list = document.getElementById('cmd-palette-list');
+    const f = filter.toLowerCase();
+    const filtered = CMD_PALETTE_COMMANDS.filter(c => c.name.toLowerCase().includes(f));
+    list.innerHTML = filtered.map((cmd, i) => `
+        <div class="cmd-palette-item${i === 0 ? ' active' : ''}" data-idx="${i}">
+            <span class="cmd-name">${cmd.name}</span>
+            ${cmd.shortcut ? `<span class="cmd-shortcut">${cmd.shortcut}</span>` : ''}
+        </div>
+    `).join('');
+
+    list.querySelectorAll('.cmd-palette-item').forEach(item => {
+        item.onclick = () => {
+            const idx = parseInt(item.dataset.idx);
+            hideCommandPalette();
+            filtered[idx]?.action();
+        };
+    });
+}
+
+function initCommandPalette() {
+    const input = document.getElementById('cmd-palette-input');
+    input.oninput = () => renderPaletteCommands(input.value);
+    input.onkeydown = (e) => {
+        if (e.key === 'Escape') { hideCommandPalette(); return; }
+        if (e.key === 'Enter') {
+            const active = document.querySelector('.cmd-palette-item.active');
+            if (active) active.click();
+            return;
+        }
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            const items = [...document.querySelectorAll('.cmd-palette-item')];
+            const cur = items.findIndex(i => i.classList.contains('active'));
+            if (cur >= 0) items[cur].classList.remove('active');
+            const next = e.key === 'ArrowDown' ? Math.min(cur + 1, items.length - 1) : Math.max(cur - 1, 0);
+            if (items[next]) { items[next].classList.add('active'); items[next].scrollIntoView({ block: 'nearest' }); }
+        }
+    };
+
+    // Close on outside click
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.command-palette')) hideCommandPalette();
+    });
 }
 
 // ============================================================
@@ -3341,6 +3430,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initTunnelManager();
     initNotesManager();
     initHistoryManager();
+    initCommandPalette();
     initSavedQueries();
     initAiChat();
     initAiSettings();
