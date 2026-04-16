@@ -1,7 +1,14 @@
 package com.dbee.controller;
 
+import com.dbee.controller.dto.AutoCompleteMetadataDto;
+import com.dbee.controller.dto.LlmChatRequest;
+import com.dbee.controller.dto.LlmChatResponse;
 import com.dbee.model.LlmSettings;
 import com.dbee.service.LlmService;
+import com.dbee.service.MetadataService;
+import com.dbee.service.SchemaContextBuilder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -9,10 +16,13 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/llm")
 public class LlmSettingsController {
+    private static final Logger log = LoggerFactory.getLogger(LlmSettingsController.class);
     private final LlmService llmService;
+    private final MetadataService metadataService;
 
-    public LlmSettingsController(LlmService llmService) {
+    public LlmSettingsController(LlmService llmService, MetadataService metadataService) {
         this.llmService = llmService;
+        this.metadataService = metadataService;
     }
 
     @GetMapping("/settings")
@@ -63,6 +73,68 @@ public class LlmSettingsController {
             );
         }
         return result;
+    }
+
+    @PostMapping("/chat")
+    public LlmChatResponse chat(@RequestBody LlmChatRequest request) {
+        try {
+            // Build schema context from connected database
+            String systemPrompt;
+            if (request.connectionId() != null && !request.connectionId().isBlank()) {
+                AutoCompleteMetadataDto metadata = metadataService.getAutoCompleteMetadata(request.connectionId());
+                systemPrompt = SchemaContextBuilder.buildSystemPrompt(metadata);
+            } else {
+                systemPrompt = "You are an SQL assistant. Generate SQL queries based on the user's question. Return ONLY the SQL query.";
+            }
+
+            String response = llmService.chat(request.message(), systemPrompt);
+
+            // Extract SQL from response (may be wrapped in markdown code blocks)
+            String sql = extractSql(response);
+
+            return LlmChatResponse.success(response, sql);
+        } catch (Exception e) {
+            log.error("AI chat failed: {}", e.getMessage());
+            return LlmChatResponse.error(e.getMessage());
+        }
+    }
+
+    /**
+     * Extract SQL from LLM response. Handles markdown code blocks and plain SQL.
+     */
+    private String extractSql(String response) {
+        if (response == null || response.isBlank()) return null;
+
+        // Try to extract from ```sql ... ``` code block
+        String text = response.trim();
+        int sqlBlockStart = text.indexOf("```sql");
+        if (sqlBlockStart >= 0) {
+            int codeStart = text.indexOf('\n', sqlBlockStart) + 1;
+            int codeEnd = text.indexOf("```", codeStart);
+            if (codeEnd > codeStart) {
+                return text.substring(codeStart, codeEnd).trim();
+            }
+        }
+
+        // Try generic ``` ... ``` block
+        int blockStart = text.indexOf("```");
+        if (blockStart >= 0) {
+            int codeStart = text.indexOf('\n', blockStart) + 1;
+            int codeEnd = text.indexOf("```", codeStart);
+            if (codeEnd > codeStart) {
+                return text.substring(codeStart, codeEnd).trim();
+            }
+        }
+
+        // If it looks like plain SQL (starts with common keywords), return as-is
+        String upper = text.toUpperCase().stripLeading();
+        if (upper.startsWith("SELECT") || upper.startsWith("INSERT") || upper.startsWith("UPDATE") ||
+            upper.startsWith("DELETE") || upper.startsWith("CREATE") || upper.startsWith("ALTER") ||
+            upper.startsWith("DROP") || upper.startsWith("WITH")) {
+            return text;
+        }
+
+        return null;
     }
 
     private String maskApiKey(String apiKey) {

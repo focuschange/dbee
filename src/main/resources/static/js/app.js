@@ -53,6 +53,7 @@ const api = {
         saveSettings: (settings) => api.request('POST', '/api/llm/settings', settings),
         testConnection: (settings) => api.request('POST', '/api/llm/test', settings),
         getProviders: () => api.request('GET', '/api/llm/providers'),
+        chat: (connectionId, message) => api.request('POST', '/api/llm/chat', { connectionId, message }),
     },
     tunnels: {
         list: () => api.request('GET', '/api/tunnels'),
@@ -152,6 +153,11 @@ function initMonaco() {
         // Ctrl+Shift+E to EXPLAIN ANALYZE
         monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyE, () => {
             executeExplain(true);
+        });
+
+        // Ctrl+Shift+A to toggle AI Chat
+        monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyA, () => {
+            toggleAiChatPanel();
         });
 
         // Register SQL autocomplete provider
@@ -2012,6 +2018,166 @@ function initNotesManager() {
 }
 
 // ============================================================
+// AI Chat Panel
+// ============================================================
+function toggleAiChatPanel() {
+    const panel = document.getElementById('ai-chat-panel');
+    const isVisible = panel.style.display !== 'none';
+    panel.style.display = isVisible ? 'none' : 'flex';
+    if (!isVisible) {
+        document.getElementById('ai-chat-input').focus();
+    }
+}
+
+function closeAiChatPanel() {
+    document.getElementById('ai-chat-panel').style.display = 'none';
+}
+
+function clearAiChat() {
+    const container = document.getElementById('ai-chat-messages');
+    container.innerHTML = `
+        <div class="ai-chat-welcome">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.4"><path d="M12 2a4 4 0 0 0-4 4c0 2.8 4 6 4 6s4-3.2 4-6a4 4 0 0 0-4-4z"/><circle cx="12" cy="6" r="1.5"/><path d="M6 12c-2 0-4 1-4 3s2 3 4 3"/><path d="M18 12c2 0 4 1 4 3s-2 3-4 3"/><path d="M8 21c0-2 2-3 4-3s4 1 4 3"/></svg>
+            <p>Ask a question in natural language and I'll generate SQL for you.</p>
+            <p class="ai-chat-hint">Example: "Show all members who enrolled after 2024"</p>
+        </div>`;
+}
+
+function appendChatMessage(role, content, sql) {
+    const container = document.getElementById('ai-chat-messages');
+    // Remove welcome message if present
+    const welcome = container.querySelector('.ai-chat-welcome');
+    if (welcome) welcome.remove();
+
+    const msgDiv = document.createElement('div');
+    msgDiv.className = `ai-chat-msg ai-chat-msg-${role}`;
+
+    if (role === 'user') {
+        msgDiv.innerHTML = `<div class="ai-msg-content">${escapeHtml(content)}</div>`;
+    } else if (role === 'assistant') {
+        let html = `<div class="ai-msg-content">${formatAiMessage(content)}</div>`;
+        if (sql) {
+            html += `<div class="ai-msg-sql">
+                <div class="ai-sql-header">
+                    <span>Generated SQL</span>
+                    <button class="btn btn-primary btn-xs ai-btn-insert" title="Insert to Editor">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+                        Insert
+                    </button>
+                </div>
+                <pre class="ai-sql-code">${escapeHtml(sql)}</pre>
+            </div>`;
+        }
+        msgDiv.innerHTML = html;
+
+        // Attach insert button handler
+        if (sql) {
+            const insertBtn = msgDiv.querySelector('.ai-btn-insert');
+            if (insertBtn) {
+                insertBtn.onclick = () => insertSqlToEditor(sql);
+            }
+        }
+    } else if (role === 'error') {
+        msgDiv.className = 'ai-chat-msg ai-chat-msg-error';
+        msgDiv.innerHTML = `<div class="ai-msg-content">${escapeHtml(content)}</div>`;
+    } else if (role === 'loading') {
+        msgDiv.className = 'ai-chat-msg ai-chat-msg-loading';
+        msgDiv.innerHTML = `<div class="ai-msg-content"><span class="ai-loading-dots">Thinking<span>...</span></span></div>`;
+    }
+
+    container.appendChild(msgDiv);
+    container.scrollTop = container.scrollHeight;
+    return msgDiv;
+}
+
+function formatAiMessage(text) {
+    // Simple markdown-like formatting
+    let html = escapeHtml(text);
+    // Bold
+    html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    // Inline code
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    // Line breaks
+    html = html.replace(/\n/g, '<br>');
+    return html;
+}
+
+function insertSqlToEditor(sql) {
+    if (monacoEditor) {
+        const model = monacoEditor.getModel();
+        const lastLine = model.getLineCount();
+        const lastCol = model.getLineMaxColumn(lastLine);
+        const currentContent = model.getValue();
+        const prefix = currentContent.trim() ? '\n\n' : '';
+        monacoEditor.executeEdits('ai-insert', [{
+            range: new monaco.Range(lastLine, lastCol, lastLine, lastCol),
+            text: prefix + sql,
+        }]);
+        monacoEditor.setPosition({ lineNumber: model.getLineCount(), column: 1 });
+        monacoEditor.focus();
+        updateStatus('SQL inserted from AI');
+    }
+}
+
+async function sendAiChatMessage() {
+    const input = document.getElementById('ai-chat-input');
+    const message = input.value.trim();
+    if (!message) return;
+
+    if (!state.activeConnectionId) {
+        appendChatMessage('error', 'No active connection. Connect to a database first.');
+        return;
+    }
+
+    input.value = '';
+    input.style.height = 'auto';
+    appendChatMessage('user', message);
+    const loadingMsg = appendChatMessage('loading', '');
+
+    document.getElementById('btn-ai-chat-send').disabled = true;
+
+    try {
+        const result = await api.llm.chat(state.activeConnectionId, message);
+        loadingMsg.remove();
+
+        if (result.error) {
+            appendChatMessage('error', result.message);
+        } else {
+            appendChatMessage('assistant', result.message, result.sql);
+        }
+    } catch (e) {
+        loadingMsg.remove();
+        appendChatMessage('error', 'Failed: ' + e.message);
+    } finally {
+        document.getElementById('btn-ai-chat-send').disabled = false;
+    }
+}
+
+function initAiChat() {
+    document.getElementById('btn-ai-chat').onclick = toggleAiChatPanel;
+    document.getElementById('btn-ai-chat-close').onclick = closeAiChatPanel;
+    document.getElementById('btn-ai-chat-clear').onclick = clearAiChat;
+    document.getElementById('btn-ai-chat-send').onclick = sendAiChatMessage;
+
+    const chatInput = document.getElementById('ai-chat-input');
+    chatInput.onkeydown = (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendAiChatMessage();
+        }
+        if (e.key === 'Escape') {
+            closeAiChatPanel();
+        }
+    };
+
+    // Auto-resize textarea
+    chatInput.oninput = () => {
+        chatInput.style.height = 'auto';
+        chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
+    };
+}
+
+// ============================================================
 // AI Settings
 // ============================================================
 const LLM_DEFAULTS = {
@@ -2278,6 +2444,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initTunnelManager();
     initNotesManager();
     initHistoryManager();
+    initAiChat();
     initAiSettings();
     initResizers();
     initMonaco();
