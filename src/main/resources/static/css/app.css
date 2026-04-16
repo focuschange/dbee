@@ -1915,6 +1915,32 @@ kbd {
     overflow: hidden;
 }
 
+/* ---- Multi-result tabs ---- */
+.multi-result-tabs {
+    display: flex;
+    gap: 2px;
+    padding: 6px 10px 0;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-elevated);
+}
+.multi-tab {
+    padding: 6px 14px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted);
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: var(--transition);
+}
+.multi-tab:hover { color: var(--text-primary); }
+.multi-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+.multi-result-content { overflow: auto; flex: 1; }
+
 /* ---- Saved Queries ---- */
 .saved-query-item {
     padding: 10px 14px;

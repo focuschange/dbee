@@ -948,9 +948,15 @@ async function executeQuery() {
     showCancelButton(true, executionId);
 
     try {
-        const result = await api.query.execute(state.activeConnectionId, sql, 1000, executionId);
+        const results = await api.query.execute(state.activeConnectionId, sql, 1000, executionId);
         state.lastResult = { connectionId: state.activeConnectionId, sql };
-        displayResult(result);
+        // Multi-query: results is an array
+        if (Array.isArray(results) && results.length > 1) {
+            displayMultiResult(results);
+        } else {
+            const result = Array.isArray(results) ? results[0] : results;
+            displayResult(result);
+        }
     } catch (e) {
         displayError(e.message);
     } finally {
@@ -1090,6 +1096,57 @@ function displayResult(result, resultLabel) {
 
     const conn = state.connections.find(c => c.id === state.activeConnectionId);
     updateStatus(`Connected: ${conn ? conn.name : ''}`, false, result.rows.length, result.executionTimeMs);
+}
+
+function displayMultiResult(results) {
+    const container = document.getElementById('result-content');
+    const filterWrap = document.getElementById('result-filter-wrap');
+    if (filterWrap) filterWrap.style.display = 'none';
+    state.resultData = null;
+
+    // Build tab header + content for each result
+    let tabsHtml = '<div class="multi-result-tabs">';
+    results.forEach((r, i) => {
+        const label = r.select ? `Result ${i + 1}` : (r.error ? `Error ${i + 1}` : `Statement ${i + 1}`);
+        tabsHtml += `<button class="multi-tab${i === 0 ? ' active' : ''}" data-idx="${i}">${label}</button>`;
+    });
+    tabsHtml += '</div><div class="multi-result-content"></div>';
+    container.innerHTML = tabsHtml;
+
+    const contentDiv = container.querySelector('.multi-result-content');
+
+    function showMultiTab(idx) {
+        container.querySelectorAll('.multi-tab').forEach((t, i) => t.classList.toggle('active', i === idx));
+        const r = results[idx];
+        if (r.error) {
+            contentDiv.innerHTML = `<div class="result-error"><div class="result-error-msg">${escapeHtml(r.errorMessage)}</div></div>`;
+        } else if (!r.select) {
+            contentDiv.innerHTML = `<div class="result-message">${r.affectedRows} row(s) affected (${r.executionTimeMs}ms)</div>`;
+        } else {
+            // Render a simple table for this result
+            let html = '<table class="result-table"><thead><tr>';
+            r.columnNames.forEach(col => { html += `<th><span class="th-label">${escapeHtml(col)}</span></th>`; });
+            html += '</tr></thead><tbody>';
+            r.rows.forEach(row => {
+                html += '<tr>';
+                row.forEach(val => {
+                    html += val === null ? '<td class="null-value">NULL</td>' : `<td>${escapeHtml(String(val))}</td>`;
+                });
+                html += '</tr>';
+            });
+            html += '</tbody></table>';
+            contentDiv.innerHTML = html;
+        }
+    }
+
+    container.querySelectorAll('.multi-tab').forEach(tab => {
+        tab.onclick = () => showMultiTab(parseInt(tab.dataset.idx));
+    });
+
+    showMultiTab(0);
+
+    const totalTime = results.reduce((s, r) => s + (r.executionTimeMs || 0), 0);
+    updateStatus(`Executed ${results.length} statements in ${totalTime}ms`);
 }
 
 function applyFilterAndSort() {
