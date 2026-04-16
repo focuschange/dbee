@@ -54,6 +54,7 @@ const api = {
         primaryKeys: (connId, schema, table) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/tables/${encodeURIComponent(table)}/primarykeys`),
         ddl: (connId, schema, table) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/tables/${encodeURIComponent(table)}/ddl`),
         indexes: (connId, schema, table) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/tables/${encodeURIComponent(table)}/indexes`),
+        erDiagram: (connId, schema) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/er-diagram`),
     },
     llm: {
         getSettings: () => api.request('GET', '/api/llm/settings'),
@@ -694,6 +695,19 @@ function createSchemaNode(connId, schema, isHidden) {
     };
 
     content.ondblclick = toggle;
+    content.oncontextmenu = (e) => {
+        e.preventDefault();
+        let existing = document.getElementById('table-ctx-menu');
+        if (existing) existing.remove();
+        const menu = document.createElement('div');
+        menu.id = 'table-ctx-menu';
+        menu.className = 'context-menu';
+        menu.style.cssText = `display:block;left:${e.clientX}px;top:${e.clientY}px`;
+        menu.innerHTML = '<div class="ctx-item">Show ER Diagram</div>';
+        document.body.appendChild(menu);
+        menu.querySelector('.ctx-item').onclick = () => { menu.remove(); showErDiagram(connId, schema.name); };
+        setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 0);
+    };
     node.querySelector('.tree-arrow').onclick = (e) => { e.stopPropagation(); toggle(); };
     return node;
 }
@@ -950,6 +964,27 @@ function selectTreeNode(contentEl) {
     if (selectedNodeEl) selectedNodeEl.classList.remove('selected');
     contentEl.classList.add('selected');
     selectedNodeEl = contentEl;
+}
+
+async function showErDiagram(connId, schema) {
+    const dialog = document.getElementById('er-dialog');
+    const content = document.getElementById('er-diagram-content');
+    dialog.style.display = 'flex';
+    content.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted)">Loading ER diagram...</div>';
+
+    document.getElementById('er-dialog-close').onclick = () => dialog.style.display = 'none';
+    dialog.querySelector('.modal-backdrop').onclick = () => dialog.style.display = 'none';
+
+    try {
+        const result = await api.metadata.erDiagram(connId, schema);
+        content.innerHTML = `<div class="mermaid">${result.mermaid}</div>`;
+        if (window.mermaid) {
+            mermaid.initialize({ startOnLoad: false, theme: document.body.dataset.theme === 'light' ? 'default' : 'dark' });
+            await mermaid.run({ nodes: content.querySelectorAll('.mermaid') });
+        }
+    } catch (e) {
+        content.innerHTML = `<div style="color:var(--error);padding:20px;">Failed: ${e.message}</div>`;
+    }
 }
 
 function showTableContextMenu(e, connId, schema, tableName) {

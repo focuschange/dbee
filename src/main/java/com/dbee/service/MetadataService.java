@@ -176,6 +176,55 @@ public class MetadataService {
         return sb.toString();
     }
 
+    public List<java.util.Map<String, String>> getForeignKeys(String connectionId, String schema, String table) {
+        ConnectionInfo info = connectionService.getConnection(connectionId);
+        DataSource ds = connectionManager.getOrCreate(info);
+        try (Connection conn = ds.getConnection()) {
+            MetadataReader reader = DialectFactory.getDialect(info.getDatabaseType())
+                    .createMetadataReader(conn);
+            return reader.getForeignKeys(schema, table);
+        } catch (SQLException e) {
+            return List.of();
+        }
+    }
+
+    public String generateErDiagram(String connectionId, String schema) {
+        ConnectionInfo info = connectionService.getConnection(connectionId);
+        DataSource ds = connectionManager.getOrCreate(info);
+        try (Connection conn = ds.getConnection()) {
+            MetadataReader reader = DialectFactory.getDialect(info.getDatabaseType())
+                    .createMetadataReader(conn);
+            List<TableInfo> tables = reader.getTables(schema);
+
+            StringBuilder mermaid = new StringBuilder("erDiagram\n");
+            for (TableInfo table : tables) {
+                if (!"TABLE".equalsIgnoreCase(table.type())) continue;
+                List<ColumnInfo> cols = reader.getColumns(schema, table.name());
+                List<PrimaryKeyInfo> pks = reader.getPrimaryKeys(schema, table.name());
+                var pkNames = pks.stream().map(PrimaryKeyInfo::columnName).toList();
+
+                mermaid.append("    ").append(table.name()).append(" {\n");
+                for (ColumnInfo col : cols) {
+                    String pkMark = pkNames.contains(col.name()) ? " PK" : "";
+                    mermaid.append("        ").append(col.typeName().replaceAll("[\\s()]", "_"))
+                            .append(" ").append(col.name()).append(pkMark).append("\n");
+                }
+                mermaid.append("    }\n");
+
+                // Foreign keys
+                var fks = reader.getForeignKeys(schema, table.name());
+                for (var fk : fks) {
+                    mermaid.append("    ").append(fk.get("pkTable"))
+                            .append(" ||--o{ ").append(table.name())
+                            .append(" : \"").append(fk.get("fkColumn")).append("\"\n");
+                }
+            }
+            return mermaid.toString();
+        } catch (SQLException e) {
+            return "erDiagram\n    %% Error: " + e.getMessage();
+        }
+    }
+
     public List<EventInfo> getEvents(String connectionId, String schema) {
         ConnectionInfo info = connectionService.getConnection(connectionId);
         DataSource ds = connectionManager.getOrCreate(info);

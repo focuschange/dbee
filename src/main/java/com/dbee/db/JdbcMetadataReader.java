@@ -5,6 +5,7 @@ import com.dbee.model.*;
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 public class JdbcMetadataReader implements MetadataReader {
     private final Connection connection;
@@ -163,6 +164,28 @@ public class JdbcMetadataReader implements MetadataReader {
             throw new RuntimeException("Failed to read indexes", e);
         }
         return indexes;
+    }
+
+    @Override
+    public List<Map<String, String>> getForeignKeys(String schema, String table) {
+        List<Map<String, String>> fks = new ArrayList<>();
+        try {
+            DatabaseMetaData meta = connection.getMetaData();
+            String catalog = useCatalogAsSchema ? schema : null;
+            String schemaPattern = useCatalogAsSchema ? null : schema;
+            try (ResultSet rs = meta.getImportedKeys(catalog, schemaPattern, table)) {
+                while (rs.next()) {
+                    fks.add(Map.of(
+                            "fkColumn", rs.getString("FKCOLUMN_NAME"),
+                            "pkTable", rs.getString("PKTABLE_NAME"),
+                            "pkColumn", rs.getString("PKCOLUMN_NAME"),
+                            "fkName", rs.getString("FK_NAME") != null ? rs.getString("FK_NAME") : ""));
+                }
+            }
+        } catch (SQLException e) {
+            // Some databases may not support this
+        }
+        return fks;
     }
 
     @Override

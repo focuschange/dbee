@@ -63,6 +63,13 @@ public class MetadataController {
         return metadataService.getIndexes(connectionId, schema, table);
     }
 
+    @GetMapping("/{connectionId}/schemas/{schema}/er-diagram")
+    public java.util.Map<String, String> getErDiagram(@PathVariable String connectionId,
+                                                       @PathVariable String schema) {
+        String mermaid = metadataService.generateErDiagram(connectionId, schema);
+        return java.util.Map.of("mermaid", mermaid);
+    }
+
     @GetMapping("/{connectionId}/schemas/{schema}/routines")
     public List<RoutineInfo> getRoutines(@PathVariable String connectionId, @PathVariable String schema) {
         return metadataService.getRoutines(connectionId, schema);
