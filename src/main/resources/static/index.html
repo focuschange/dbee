@@ -75,12 +75,18 @@
                 <div class="menu-dropdown">
                     <button class="menu-action" id="btn-toggle-toolbar" onclick="toggleIconToolbar()">Hide Toolbar</button>
                     <button class="menu-action" onclick="showEditorSettings()">Editor Settings</button>
+                    <div class="menu-separator"></div>
+                    <div class="menu-label">Zoom</div>
+                    <button class="menu-action" onclick="adjustZoom(1)">Zoom In <span class="menu-shortcut">Ctrl+=</span></button>
+                    <button class="menu-action" onclick="adjustZoom(-1)">Zoom Out <span class="menu-shortcut">Ctrl+-</span></button>
+                    <button class="menu-action" onclick="adjustZoom(0)">Reset Zoom</button>
                     <button class="menu-action" onclick="showCommandPalette()">Command Palette <span class="menu-shortcut">Ctrl+P</span></button>
                     <div class="menu-separator"></div>
                     <div class="menu-label">Theme</div>
                     <button class="menu-action theme-btn" data-theme="normal">Normal</button>
                     <button class="menu-action theme-btn" data-theme="light">Light</button>
                     <button class="menu-action theme-btn" data-theme="dark">Dark</button>
+                    <button class="menu-action theme-btn" data-theme="high-contrast">High Contrast</button>
                 </div>
             </div>
             <div class="menu-item">

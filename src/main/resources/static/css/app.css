@@ -92,6 +92,36 @@
     --monaco-theme: vs-dark;
 }
 
+/* ---- High Contrast Theme ---- */
+[data-theme="high-contrast"] {
+    --bg-base: #000000;
+    --bg-surface: #000000;
+    --bg-elevated: #1a1a1a;
+    --bg-overlay: #2a2a2a;
+    --bg-hover: rgba(255, 255, 255, 0.12);
+    --bg-active: rgba(255, 255, 0, 0.2);
+    --border-subtle: rgba(255, 255, 255, 0.3);
+    --border-default: rgba(255, 255, 255, 0.5);
+    --border-strong: rgba(255, 255, 255, 0.7);
+    --text-primary: #ffffff;
+    --text-secondary: #e0e0e0;
+    --text-muted: #b0b0b0;
+    --text-bright: #ffffff;
+    --accent: #ffff00;
+    --accent-hover: #ffff44;
+    --accent-subtle: rgba(255, 255, 0, 0.15);
+    --success: #00ff00;
+    --success-subtle: rgba(0, 255, 0, 0.15);
+    --error: #ff4444;
+    --error-subtle: rgba(255, 68, 68, 0.15);
+    --warning: #ffaa00;
+    --shadow-sm: 0 1px 3px rgba(255, 255, 255, 0.1);
+    --shadow-md: 0 4px 16px rgba(255, 255, 255, 0.1);
+    --shadow-lg: 0 12px 48px rgba(255, 255, 255, 0.1);
+    --logo-bg: #000000;
+    --monaco-theme: hc-black;
+}
+
 /* Light theme overrides for specific elements */
 [data-theme="light"] .result-error {
     color: #dc2626;

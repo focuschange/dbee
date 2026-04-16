@@ -3167,6 +3167,24 @@ async function aiIndexHint() {
 }
 
 // ============================================================
+// Global Zoom
+// ============================================================
+function adjustZoom(dir) {
+    const root = document.documentElement;
+    let currentZoom = parseFloat(localStorage.getItem('dbee-zoom') || '100');
+    if (dir === 0) currentZoom = 100;
+    else currentZoom = Math.max(70, Math.min(150, currentZoom + dir * 10));
+    root.style.fontSize = currentZoom + '%';
+    localStorage.setItem('dbee-zoom', String(currentZoom));
+    updateStatus(`Zoom: ${currentZoom}%`);
+}
+
+function restoreZoom() {
+    const zoom = localStorage.getItem('dbee-zoom');
+    if (zoom) document.documentElement.style.fontSize = zoom + '%';
+}
+
+// ============================================================
 // Connection Import/Export
 // ============================================================
 function exportConnections() {
@@ -4033,6 +4051,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initTunnelManager();
     initNotesManager();
     initHistoryManager();
+    restoreZoom();
     restoreToolbarState();
     initCommandPalette();
     initSavedQueries();
