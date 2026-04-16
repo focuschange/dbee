@@ -4,6 +4,7 @@ import com.dbee.config.ConnectionConfig;
 import com.dbee.config.AppSecurityConfig;
 import com.dbee.config.LlmConfig;
 import com.dbee.config.SavedQueryConfig;
+import com.dbee.config.SnippetConfig;
 import com.dbee.config.NoteConfig;
 import com.dbee.config.QueryHistoryConfig;
 import com.dbee.config.SshTunnelConfig;
@@ -59,6 +60,11 @@ public class DBeeApplication {
     @Bean
     public LlmConfig llmConfig() {
         return new LlmConfig();
+    }
+
+    @Bean
+    public SnippetConfig snippetConfig() {
+        return new SnippetConfig();
     }
 
     @Bean

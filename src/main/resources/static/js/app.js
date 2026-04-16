@@ -67,6 +67,11 @@ const api = {
         optimizeSql: (connectionId, sql) => api.request('POST', '/api/llm/optimize-sql', { connectionId, message: sql }),
         analyzeResult: (message) => api.request('POST', '/api/llm/analyze-result', { connectionId: null, message }),
     },
+    snippets: {
+        list: () => api.request('GET', '/api/snippets'),
+        create: (s) => api.request('POST', '/api/snippets', s),
+        delete: (id) => api.request('DELETE', `/api/snippets/${id}`),
+    },
     savedQueries: {
         list: () => api.request('GET', '/api/saved-queries'),
         create: (query) => api.request('POST', '/api/saved-queries', query),
@@ -336,9 +341,33 @@ function registerSqlCompletionProvider() {
                 }
             }
 
+            // Snippet suggestions
+            if (state.snippetsCache) {
+                state.snippetsCache.forEach(s => {
+                    suggestions.push({
+                        label: s.prefix,
+                        kind: monaco.languages.CompletionItemKind.Snippet,
+                        insertText: s.body.replace(/\$\{\d+:([^}]+)\}/g, '$1'),
+                        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                        detail: s.name,
+                        documentation: s.description,
+                        range: range,
+                        sortText: '0_' + s.prefix,
+                    });
+                });
+            }
+
             return { suggestions: deduplicateSuggestions(suggestions) };
         }
     });
+}
+
+async function loadSnippetsCache() {
+    try {
+        state.snippetsCache = await api.snippets.list();
+    } catch (e) {
+        state.snippetsCache = [];
+    }
 }
 
 function getDotCompletions(prefix, range, fullText) {
@@ -3601,4 +3630,5 @@ document.addEventListener('DOMContentLoaded', () => {
     initResizers();
     initMonaco();
     loadConnections();
+    loadSnippetsCache();
 });
