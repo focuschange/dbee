@@ -54,6 +54,7 @@ const api = {
         testConnection: (settings) => api.request('POST', '/api/llm/test', settings),
         getProviders: () => api.request('GET', '/api/llm/providers'),
         chat: (connectionId, message) => api.request('POST', '/api/llm/chat', { connectionId, message }),
+        fixSql: (connectionId, sql, errorMessage) => api.request('POST', '/api/llm/fix-sql', { connectionId, sql, errorMessage }),
     },
     tunnels: {
         list: () => api.request('GET', '/api/tunnels'),
@@ -979,9 +980,18 @@ function displayResult(result, resultLabel) {
     const container = document.getElementById('result-content');
 
     if (result.error) {
-        container.innerHTML = `<div class="result-error">${escapeHtml(result.errorMessage)}</div>`;
+        const sql = state.lastResult?.sql || getCurrentSql();
+        container.innerHTML = `<div class="result-error">
+            <div class="result-error-msg">${escapeHtml(result.errorMessage)}</div>
+            ${state.activeConnectionId ? `<button class="btn btn-ghost btn-sm ai-fix-btn" onclick="askAiToFix('${escapeHtml(result.errorMessage).replace(/'/g, "\\'")}')">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 2.8 4 6 4 6s4-3.2 4-6a4 4 0 0 0-4-4z"/><circle cx="12" cy="6" r="1.5"/></svg>
+                Ask AI to Fix
+            </button>` : ''}
+            <div id="ai-fix-result" style="display:none;"></div>
+        </div>`;
         updateStatus(result.errorMessage, true);
         state.resultData = null;
+        state.lastError = { sql, errorMessage: result.errorMessage };
         return;
     }
 
@@ -1262,9 +1272,77 @@ async function performCellUpdate(rowIdx, colIdx, newValue) {
     return await api.query.updateCell(state.activeConnectionId, schemaName, tableName, primaryKeys, column, newValue);
 }
 
+async function askAiToFix(errorMsg) {
+    const resultDiv = document.getElementById('ai-fix-result');
+    if (!resultDiv) return;
+
+    const sql = state.lastError?.sql || getCurrentSql();
+    const error = state.lastError?.errorMessage || errorMsg;
+
+    // Hide the button, show loading
+    const fixBtn = document.querySelector('.ai-fix-btn');
+    if (fixBtn) fixBtn.style.display = 'none';
+
+    resultDiv.style.display = 'block';
+    resultDiv.className = 'ai-fix-result ai-fix-loading';
+    resultDiv.innerHTML = '<span class="ai-loading-dots">AI is analyzing<span>...</span></span>';
+
+    try {
+        const result = await api.llm.fixSql(state.activeConnectionId, sql, error);
+
+        if (result.error) {
+            resultDiv.className = 'ai-fix-result ai-fix-error';
+            resultDiv.innerHTML = `<div class="ai-fix-msg">${escapeHtml(result.message)}</div>`;
+        } else {
+            let html = `<div class="ai-fix-msg">${formatAiMessage(result.message)}</div>`;
+            if (result.sql) {
+                html += `<div class="ai-fix-sql">
+                    <div class="ai-sql-header">
+                        <span>Suggested Fix</span>
+                        <button class="btn btn-primary btn-xs" id="btn-apply-fix">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                            Apply
+                        </button>
+                    </div>
+                    <pre class="ai-sql-code">${escapeHtml(result.sql)}</pre>
+                </div>`;
+            }
+            resultDiv.className = 'ai-fix-result ai-fix-success';
+            resultDiv.innerHTML = html;
+
+            // Attach apply button handler
+            if (result.sql) {
+                const applyBtn = document.getElementById('btn-apply-fix');
+                if (applyBtn) {
+                    applyBtn.onclick = () => {
+                        if (monacoEditor) {
+                            monacoEditor.setValue(result.sql);
+                            monacoEditor.focus();
+                            updateStatus('Fixed SQL applied to editor');
+                        }
+                    };
+                }
+            }
+        }
+    } catch (e) {
+        resultDiv.className = 'ai-fix-result ai-fix-error';
+        resultDiv.innerHTML = `<div class="ai-fix-msg">AI analysis failed: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
 function displayError(msg) {
-    document.getElementById('result-content').innerHTML = `<div class="result-error">${escapeHtml(msg)}</div>`;
+    const container = document.getElementById('result-content');
+    const sql = getCurrentSql();
+    container.innerHTML = `<div class="result-error">
+        <div class="result-error-msg">${escapeHtml(msg)}</div>
+        ${state.activeConnectionId ? `<button class="btn btn-ghost btn-sm ai-fix-btn" onclick="askAiToFix('${escapeHtml(msg).replace(/'/g, "\\'")}')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 2.8 4 6 4 6s4-3.2 4-6a4 4 0 0 0-4-4z"/><circle cx="12" cy="6" r="1.5"/></svg>
+            Ask AI to Fix
+        </button>` : ''}
+        <div id="ai-fix-result" style="display:none;"></div>
+    </div>`;
     updateStatus(msg, true);
+    state.lastError = { sql, errorMessage: msg };
 }
 
 // ============================================================

@@ -3,6 +3,7 @@ package com.dbee.controller;
 import com.dbee.controller.dto.AutoCompleteMetadataDto;
 import com.dbee.controller.dto.LlmChatRequest;
 import com.dbee.controller.dto.LlmChatResponse;
+import com.dbee.controller.dto.LlmFixSqlRequest;
 import com.dbee.model.LlmSettings;
 import com.dbee.service.LlmService;
 import com.dbee.service.MetadataService;
@@ -95,6 +96,42 @@ public class LlmSettingsController {
             return LlmChatResponse.success(response, sql);
         } catch (Exception e) {
             log.error("AI chat failed: {}", e.getMessage());
+            return LlmChatResponse.error(e.getMessage());
+        }
+    }
+
+    @PostMapping("/fix-sql")
+    public LlmChatResponse fixSql(@RequestBody LlmFixSqlRequest request) {
+        try {
+            // Build schema context
+            String schemaContext = "";
+            if (request.connectionId() != null && !request.connectionId().isBlank()) {
+                try {
+                    AutoCompleteMetadataDto metadata = metadataService.getAutoCompleteMetadata(request.connectionId());
+                    schemaContext = "\n\nDatabase Schema:\n" + SchemaContextBuilder.buildSchemaText(metadata);
+                } catch (Exception e) {
+                    log.warn("Could not load schema for fix-sql: {}", e.getMessage());
+                }
+            }
+
+            String systemPrompt = """
+                    You are an expert SQL debugger. The user executed a SQL query that resulted in an error.
+                    Analyze the error, explain the cause briefly, and provide a corrected SQL query.
+
+                    Format your response as:
+                    1. A brief explanation of what went wrong (1-2 sentences)
+                    2. The corrected SQL in a ```sql code block
+
+                    Keep your explanation concise and focused on the fix.""" + schemaContext;
+
+            String userMessage = "SQL Query:\n```sql\n" + request.sql() + "\n```\n\nError:\n" + request.errorMessage();
+
+            String response = llmService.chat(userMessage, systemPrompt);
+            String sql = extractSql(response);
+
+            return LlmChatResponse.success(response, sql);
+        } catch (Exception e) {
+            log.error("AI fix-sql failed: {}", e.getMessage());
             return LlmChatResponse.error(e.getMessage());
         }
     }

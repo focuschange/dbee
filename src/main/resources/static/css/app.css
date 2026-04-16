@@ -850,6 +850,82 @@ kbd {
     font-family: 'JetBrains Mono', monospace;
 }
 
+.result-error-msg {
+    margin-bottom: 8px;
+}
+
+.ai-fix-btn {
+    margin-top: 4px;
+    color: var(--accent) !important;
+    border-color: var(--accent) !important;
+    font-family: 'Inter', sans-serif;
+}
+
+.ai-fix-btn:hover {
+    background: var(--accent-subtle) !important;
+}
+
+.ai-fix-result {
+    margin-top: 12px;
+    padding: 12px;
+    border-radius: var(--radius-sm);
+    font-family: 'Inter', sans-serif;
+    color: var(--text-primary);
+}
+
+.ai-fix-loading {
+    background: var(--bg-elevated);
+    color: var(--text-muted);
+}
+
+.ai-fix-success {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-default);
+}
+
+.ai-fix-error {
+    background: var(--error-subtle);
+}
+
+.ai-fix-msg {
+    font-size: 13px;
+    line-height: 1.6;
+    margin-bottom: 8px;
+}
+
+.ai-fix-sql {
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    margin-top: 8px;
+}
+
+.ai-fix-sql .ai-sql-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    background: var(--bg-overlay);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.ai-fix-sql .ai-sql-code {
+    padding: 10px 12px;
+    margin: 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-primary);
+    background: var(--bg-base);
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 /* ============================================================
    Status Bar
    ============================================================ */
