@@ -174,6 +174,57 @@ public class LlmSettingsController {
         return null;
     }
 
+    @PostMapping("/explain-sql")
+    public LlmChatResponse explainSql(@RequestBody LlmChatRequest request) {
+        try {
+            String systemPrompt = """
+                    You are an SQL expert. Explain what the given SQL query does in clear, concise language.
+                    Break down each part: tables involved, joins, conditions, aggregations, etc.
+                    Use bullet points for clarity. Keep it under 200 words.""";
+            String response = llmService.chat("Explain this SQL:\n```sql\n" + request.message() + "\n```", systemPrompt);
+            return LlmChatResponse.success(response, null);
+        } catch (Exception e) {
+            return LlmChatResponse.error(e.getMessage());
+        }
+    }
+
+    @PostMapping("/optimize-sql")
+    public LlmChatResponse optimizeSql(@RequestBody LlmChatRequest request) {
+        try {
+            String schemaContext = "";
+            if (request.connectionId() != null && !request.connectionId().isBlank()) {
+                try {
+                    var metadata = metadataService.getAutoCompleteMetadata(request.connectionId());
+                    schemaContext = "\n\nDatabase Schema:\n" + SchemaContextBuilder.buildSchemaText(metadata);
+                } catch (Exception ignored) {}
+            }
+            String systemPrompt = """
+                    You are an SQL performance expert. Analyze the given SQL query and suggest optimizations.
+                    Consider: index usage, join order, subquery elimination, proper filtering.
+                    If you suggest a rewritten query, put it in a ```sql code block.
+                    Be concise and practical.""" + schemaContext;
+            String response = llmService.chat("Optimize this SQL:\n```sql\n" + request.message() + "\n```", systemPrompt);
+            String sql = extractSql(response);
+            return LlmChatResponse.success(response, sql);
+        } catch (Exception e) {
+            return LlmChatResponse.error(e.getMessage());
+        }
+    }
+
+    @PostMapping("/analyze-result")
+    public LlmChatResponse analyzeResult(@RequestBody LlmChatRequest request) {
+        try {
+            String systemPrompt = """
+                    You are a data analyst. The user will provide a SQL query and its results.
+                    Analyze the data and provide insights: patterns, anomalies, statistics, trends.
+                    Be concise (under 200 words) and use bullet points.""";
+            String response = llmService.chat(request.message(), systemPrompt);
+            return LlmChatResponse.success(response, null);
+        } catch (Exception e) {
+            return LlmChatResponse.error(e.getMessage());
+        }
+    }
+
     private String maskApiKey(String apiKey) {
         if (apiKey == null || apiKey.isBlank()) return "";
         if (apiKey.length() <= 8) return "••••";

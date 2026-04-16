@@ -62,6 +62,9 @@ const api = {
         getProviders: () => api.request('GET', '/api/llm/providers'),
         chat: (connectionId, message) => api.request('POST', '/api/llm/chat', { connectionId, message }),
         fixSql: (connectionId, sql, errorMessage) => api.request('POST', '/api/llm/fix-sql', { connectionId, sql, errorMessage }),
+        explainSql: (sql) => api.request('POST', '/api/llm/explain-sql', { connectionId: null, message: sql }),
+        optimizeSql: (connectionId, sql) => api.request('POST', '/api/llm/optimize-sql', { connectionId, message: sql }),
+        analyzeResult: (message) => api.request('POST', '/api/llm/analyze-result', { connectionId: null, message }),
     },
     savedQueries: {
         list: () => api.request('GET', '/api/saved-queries'),
@@ -179,6 +182,11 @@ function initMonaco() {
         monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyA, () => {
             toggleAiChatPanel();
         });
+
+        // Add AI context menu actions
+        monacoEditor.addAction({ id: 'ai-explain', label: 'AI: Explain SQL', contextMenuGroupId: 'ai', run: aiExplainSql });
+        monacoEditor.addAction({ id: 'ai-optimize', label: 'AI: Optimize SQL', contextMenuGroupId: 'ai', run: aiOptimizeSql });
+        monacoEditor.addAction({ id: 'ai-analyze', label: 'AI: Analyze Results', contextMenuGroupId: 'ai', run: aiAnalyzeResult });
 
         // Register SQL autocomplete provider
         registerSqlCompletionProvider();
@@ -2592,6 +2600,57 @@ function initNotesManager() {
     document.getElementById('btn-add-note').onclick = createNote;
     document.getElementById('btn-save-note').onclick = saveNote;
     document.getElementById('btn-delete-note').onclick = deleteNote;
+}
+
+// ============================================================
+// AI SQL Assistants (#40, #41, #42)
+// ============================================================
+async function aiExplainSql() {
+    const sql = getCurrentSql();
+    if (!sql.trim()) { updateStatus('No SQL to explain', true); return; }
+    toggleAiChatPanel(); // open chat panel
+    appendChatMessage('user', `Explain this SQL:\n${sql}`);
+    const loadingMsg = appendChatMessage('loading', '');
+    try {
+        const result = await api.llm.explainSql(sql);
+        loadingMsg.remove();
+        if (result.error) appendChatMessage('error', result.message);
+        else appendChatMessage('assistant', result.message, result.sql);
+    } catch (e) { loadingMsg.remove(); appendChatMessage('error', e.message); }
+}
+
+async function aiOptimizeSql() {
+    const sql = getCurrentSql();
+    if (!sql.trim()) { updateStatus('No SQL to optimize', true); return; }
+    toggleAiChatPanel();
+    appendChatMessage('user', `Optimize this SQL:\n${sql}`);
+    const loadingMsg = appendChatMessage('loading', '');
+    try {
+        const result = await api.llm.optimizeSql(state.activeConnectionId, sql);
+        loadingMsg.remove();
+        if (result.error) appendChatMessage('error', result.message);
+        else appendChatMessage('assistant', result.message, result.sql);
+    } catch (e) { loadingMsg.remove(); appendChatMessage('error', e.message); }
+}
+
+async function aiAnalyzeResult() {
+    if (!state.resultData) { updateStatus('No result to analyze', true); return; }
+    const sql = state.lastResult?.sql || '';
+    const rows = state.resultData.rows.slice(0, 20); // send first 20 rows
+    const cols = state.resultData.columnNames;
+    let message = `SQL: ${sql}\n\nResults (${state.resultData.rows.length} total rows, showing first ${rows.length}):\n`;
+    message += cols.join(' | ') + '\n';
+    rows.forEach(r => { message += r.map(v => v === null ? 'NULL' : String(v)).join(' | ') + '\n'; });
+
+    toggleAiChatPanel();
+    appendChatMessage('user', 'Analyze query results');
+    const loadingMsg = appendChatMessage('loading', '');
+    try {
+        const result = await api.llm.analyzeResult(message);
+        loadingMsg.remove();
+        if (result.error) appendChatMessage('error', result.message);
+        else appendChatMessage('assistant', result.message, null);
+    } catch (e) { loadingMsg.remove(); appendChatMessage('error', e.message); }
 }
 
 // ============================================================
