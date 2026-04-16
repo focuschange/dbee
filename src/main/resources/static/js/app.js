@@ -1448,11 +1448,18 @@ function formatCellValue(val, typeName) {
     return { html: escapeHtml(str), cls: '' };
 }
 
+const RENDER_PAGE_SIZE = 200;
+
 function renderResultTable(rows, totalRows) {
     const container = document.getElementById('result-content');
     const { columnNames } = state.resultData;
     const { columnIndex: sortCol, direction: sortDir } = state.sortState;
     const keyword = state.filterKeyword.toLowerCase();
+
+    // For large results, render in pages
+    const visibleRows = rows.length > RENDER_PAGE_SIZE ? rows.slice(0, RENDER_PAGE_SIZE) : rows;
+    state._allFilteredRows = rows;
+    state._renderedCount = visibleRows.length;
 
     let html = '<table class="result-table"><thead><tr>';
     columnNames.forEach((col, idx) => {
@@ -1465,7 +1472,7 @@ function renderResultTable(rows, totalRows) {
 
     const editable = state.resultData.tableName && !keyword;
     const typeNames = state.resultData.columnTypeNames || [];
-    rows.forEach((row, rowIdx) => {
+    visibleRows.forEach((row, rowIdx) => {
         html += `<tr data-row-idx="${rowIdx}">`;
         row.forEach((val, colIdx) => {
             const editAttr = editable ? ` data-col-idx="${colIdx}"` : '';
@@ -1485,7 +1492,23 @@ function renderResultTable(rows, totalRows) {
     });
 
     html += '</tbody></table>';
+    if (rows.length > visibleRows.length) {
+        html += `<div class="load-more-bar"><button class="btn btn-ghost btn-sm" id="btn-load-more">Show more (${visibleRows.length} of ${rows.length})</button></div>`;
+    }
     container.innerHTML = html;
+
+    // Load more button
+    const loadMoreBtn = document.getElementById('btn-load-more');
+    if (loadMoreBtn) {
+        loadMoreBtn.onclick = () => {
+            state._renderedCount = Math.min(state._renderedCount + RENDER_PAGE_SIZE, state._allFilteredRows.length);
+            // Re-render with more rows (simplified: just re-call full render)
+            const moreRows = state._allFilteredRows.slice(0, state._renderedCount);
+            // Temporarily override to render more
+            const orig = state._allFilteredRows;
+            renderResultTable(moreRows.length === orig.length ? orig : moreRows, totalRows);
+        };
+    }
 
     // Attach sort click handlers
     container.querySelectorAll('.result-table th').forEach(th => {

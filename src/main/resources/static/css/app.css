@@ -829,6 +829,13 @@ kbd {
     opacity: 0.6;
 }
 
+/* Load more pagination */
+.load-more-bar {
+    text-align: center;
+    padding: 10px;
+    border-top: 1px solid var(--border-subtle);
+}
+
 /* Row selection & edit actions */
 .result-table tbody tr.row-selected { background: var(--accent-subtle) !important; }
 .edit-actions { display: inline; }
