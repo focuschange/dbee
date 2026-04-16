@@ -1694,18 +1694,77 @@ function initEventHandlers() {
 
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        const mod = e.ctrlKey || e.metaKey;
+
+        // Ctrl/Cmd+Enter — Execute query
+        if (mod && e.key === 'Enter') {
             e.preventDefault();
             executeQuery();
+            return;
         }
-        // Ctrl/Cmd+F to focus result filter when result panel is visible
-        if ((e.ctrlKey || e.metaKey) && e.key === 'f' && state.resultData) {
+
+        // Ctrl/Cmd+F — Focus result filter
+        if (mod && e.key === 'f' && state.resultData) {
             const filterInput = document.getElementById('result-filter-input');
             if (filterInput && filterInput.offsetParent !== null) {
                 e.preventDefault();
                 filterInput.focus();
                 filterInput.select();
+                return;
             }
+        }
+
+        // Alt+N — New editor tab
+        if (e.altKey && e.key === 'n') {
+            e.preventDefault();
+            addEditorTab();
+            return;
+        }
+
+        // Alt+W — Close current tab
+        if (e.altKey && e.key === 'w') {
+            e.preventDefault();
+            if (state.activeEditorId && state.editors.length > 1) {
+                closeTab(state.activeEditorId);
+            }
+            return;
+        }
+
+        // Alt+1~9 — Switch to tab N
+        if (e.altKey && e.key >= '1' && e.key <= '9') {
+            e.preventDefault();
+            const idx = parseInt(e.key) - 1;
+            if (idx < state.editors.length) {
+                switchTab(state.editors[idx].id);
+            }
+            return;
+        }
+
+        // Alt+H — Query History
+        if (e.altKey && e.key === 'h') {
+            e.preventDefault();
+            showHistoryDialog();
+            return;
+        }
+
+        // Alt+X — Export CSV
+        if (e.altKey && e.key === 'x') {
+            e.preventDefault();
+            exportCsv();
+            return;
+        }
+
+        // Escape — Close open modals/panels
+        if (e.key === 'Escape') {
+            // Close AI chat panel if open
+            const chatPanel = document.getElementById('ai-chat-panel');
+            if (chatPanel && chatPanel.style.display !== 'none') {
+                closeAiChatPanel();
+                return;
+            }
+            // Close any open modal
+            const modals = document.querySelectorAll('.modal[style*="display: flex"], .modal[style*="display:flex"]');
+            modals.forEach(m => m.style.display = 'none');
         }
     });
 
