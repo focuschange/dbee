@@ -103,6 +103,7 @@ const state = {
     autocompleteCache: null, // { connectionId, schemas: [{ name, tables: [{ name, type, columns: [{ name, typeName }] }] }] }
     resultData: null, // { columnNames, columnTypes, rows (original), executionTimeMs }
     sortState: { columnIndex: -1, direction: null }, // direction: 'asc' | 'desc' | null
+    filterKeyword: '', // result filter keyword
 };
 
 let monacoEditor = null;
@@ -938,24 +939,64 @@ function displayResult(result) {
         return;
     }
 
-    // Store original data for sorting
+    // Store original data for sorting/filtering
     state.resultData = {
         columnNames: result.columnNames,
         rows: result.rows.map(r => [...r]), // deep copy
         executionTimeMs: result.executionTimeMs,
     };
     state.sortState = { columnIndex: -1, direction: null };
+    state.filterKeyword = '';
 
-    renderResultTable(result.rows);
+    // Show filter bar & reset input
+    const filterWrap = document.getElementById('result-filter-wrap');
+    const filterInput = document.getElementById('result-filter-input');
+    if (filterWrap) filterWrap.style.display = '';
+    if (filterInput) filterInput.value = '';
+
+    applyFilterAndSort();
 
     const conn = state.connections.find(c => c.id === state.activeConnectionId);
     updateStatus(`Connected: ${conn ? conn.name : ''}`, false, result.rows.length, result.executionTimeMs);
 }
 
-function renderResultTable(rows) {
+function applyFilterAndSort() {
+    if (!state.resultData) return;
+
+    let rows = state.resultData.rows.map(r => [...r]);
+    const keyword = state.filterKeyword.toLowerCase();
+    const totalRows = rows.length;
+
+    // Filter
+    if (keyword) {
+        rows = rows.filter(row =>
+            row.some(val => val !== null && String(val).toLowerCase().includes(keyword))
+        );
+    }
+
+    // Sort
+    const { columnIndex: sortCol, direction: sortDir } = state.sortState;
+    if (sortDir !== null && sortCol >= 0) {
+        const dir = sortDir === 'asc' ? 1 : -1;
+        rows.sort((a, b) => {
+            const va = a[sortCol];
+            const vb = b[sortCol];
+            if (va === null && vb === null) return 0;
+            if (va === null) return 1;
+            if (vb === null) return -1;
+            if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
+            return String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: 'base' }) * dir;
+        });
+    }
+
+    renderResultTable(rows, totalRows);
+}
+
+function renderResultTable(rows, totalRows) {
     const container = document.getElementById('result-content');
     const { columnNames } = state.resultData;
     const { columnIndex: sortCol, direction: sortDir } = state.sortState;
+    const keyword = state.filterKeyword.toLowerCase();
 
     let html = '<table class="result-table"><thead><tr>';
     columnNames.forEach((col, idx) => {
@@ -972,7 +1013,8 @@ function renderResultTable(rows) {
             if (val === null) {
                 html += '<td class="null-value">NULL</td>';
             } else {
-                html += `<td>${escapeHtml(String(val))}</td>`;
+                const str = String(val);
+                html += `<td>${keyword ? highlightMatch(str, keyword) : escapeHtml(str)}</td>`;
             }
         });
         html += '</tr>';
@@ -988,6 +1030,25 @@ function renderResultTable(rows) {
             sortResultByColumn(idx);
         };
     });
+
+    // Update summary with filter info
+    const summary = document.getElementById('result-summary');
+    if (summary && totalRows !== undefined) {
+        const timeMs = state.resultData.executionTimeMs;
+        if (keyword && rows.length !== totalRows) {
+            summary.textContent = `${rows.length} / ${totalRows} rows in ${timeMs}ms`;
+        } else {
+            summary.textContent = `${rows.length} rows in ${timeMs}ms`;
+        }
+    }
+}
+
+function highlightMatch(text, keyword) {
+    const escaped = escapeHtml(text);
+    const escapedKeyword = escapeHtml(keyword);
+    if (!escapedKeyword) return escaped;
+    const regex = new RegExp(`(${escapedKeyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+    return escaped.replace(regex, '<mark class="filter-highlight">$1</mark>');
 }
 
 function sortResultByColumn(colIndex) {
@@ -1006,35 +1067,7 @@ function sortResultByColumn(colIndex) {
         sortState.direction = null;
     }
 
-    let rows;
-    if (sortState.direction === null) {
-        // Restore original order
-        rows = state.resultData.rows.map(r => [...r]);
-    } else {
-        rows = state.resultData.rows.map(r => [...r]);
-        const dir = sortState.direction === 'asc' ? 1 : -1;
-        const idx = sortState.columnIndex;
-
-        rows.sort((a, b) => {
-            const va = a[idx];
-            const vb = b[idx];
-
-            // NULLs always last
-            if (va === null && vb === null) return 0;
-            if (va === null) return 1;
-            if (vb === null) return -1;
-
-            // Numeric comparison if both are numbers
-            if (typeof va === 'number' && typeof vb === 'number') {
-                return (va - vb) * dir;
-            }
-
-            // String comparison
-            return String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: 'base' }) * dir;
-        });
-    }
-
-    renderResultTable(rows);
+    applyFilterAndSort();
 }
 
 function displayError(msg) {
@@ -1392,6 +1425,43 @@ function initEventHandlers() {
         if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
             e.preventDefault();
             executeQuery();
+        }
+        // Ctrl/Cmd+F to focus result filter when result panel is visible
+        if ((e.ctrlKey || e.metaKey) && e.key === 'f' && state.resultData) {
+            const filterInput = document.getElementById('result-filter-input');
+            if (filterInput && filterInput.offsetParent !== null) {
+                e.preventDefault();
+                filterInput.focus();
+                filterInput.select();
+            }
+        }
+    });
+
+    // Result filter
+    let filterTimer = null;
+    document.getElementById('result-filter-input').addEventListener('input', (e) => {
+        clearTimeout(filterTimer);
+        filterTimer = setTimeout(() => {
+            state.filterKeyword = e.target.value.trim();
+            applyFilterAndSort();
+        }, 200);
+    });
+
+    document.getElementById('result-filter-clear').onclick = () => {
+        const input = document.getElementById('result-filter-input');
+        input.value = '';
+        state.filterKeyword = '';
+        applyFilterAndSort();
+        input.focus();
+    };
+
+    // Escape to clear filter
+    document.getElementById('result-filter-input').addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            e.target.value = '';
+            state.filterKeyword = '';
+            applyFilterAndSort();
+            e.target.blur();
         }
     });
 }
