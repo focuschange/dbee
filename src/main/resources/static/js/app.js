@@ -991,6 +991,21 @@ async function cancelQuery(executionId) {
     }
 }
 
+function formatSql() {
+    if (!monacoEditor) return;
+    const sql = monacoEditor.getValue();
+    if (!sql.trim()) return;
+    try {
+        const formatted = window.sqlFormatter
+            ? sqlFormatter.format(sql, { language: 'sql', tabWidth: 2 })
+            : sql;
+        monacoEditor.setValue(formatted);
+        updateStatus('SQL formatted');
+    } catch (e) {
+        updateStatus('Format failed: ' + e.message, true);
+    }
+}
+
 async function executeExplain(analyze = false) {
     if (!state.activeConnectionId) {
         updateStatus('No active connection. Double-click a connection in the tree.', true);
@@ -1707,6 +1722,7 @@ function initEventHandlers() {
     document.getElementById('btn-run').onclick = executeQuery;
     document.getElementById('btn-explain').onclick = () => executeExplain(false);
     document.getElementById('btn-explain-analyze').onclick = () => executeExplain(true);
+    document.getElementById('btn-format').onclick = formatSql;
     document.getElementById('btn-new-tab').onclick = () => addEditorTab();
     document.getElementById('btn-add-tab').onclick = () => addEditorTab();
     document.getElementById('btn-export').onclick = exportCsv;
@@ -1781,6 +1797,13 @@ function initEventHandlers() {
             if (idx < state.editors.length) {
                 switchTab(state.editors[idx].id);
             }
+            return;
+        }
+
+        // Ctrl/Cmd+Shift+F — Format SQL
+        if (mod && e.shiftKey && e.key === 'F') {
+            e.preventDefault();
+            formatSql();
             return;
         }
 
