@@ -21,4 +21,19 @@ public class SQLiteDialect implements DatabaseDialect {
     public MetadataReader createMetadataReader(Connection connection) {
         return new JdbcMetadataReader(connection, true);
     }
+
+    @Override
+    public String getExplainQuery(String sql) {
+        return "EXPLAIN QUERY PLAN " + sql;
+    }
+
+    @Override
+    public String getExplainAnalyzeQuery(String sql) {
+        return null; // SQLite doesn't support EXPLAIN ANALYZE
+    }
+
+    @Override
+    public boolean supportsExplainAnalyze() {
+        return false;
+    }
 }

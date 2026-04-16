@@ -34,6 +34,8 @@ const api = {
     query: {
         execute: (connectionId, sql, maxRows = 1000) =>
             api.request('POST', '/api/query/execute', { connectionId, sql, maxRows }),
+        explain: (connectionId, sql, analyze = false) =>
+            api.request('POST', '/api/query/explain', { connectionId, sql, analyze }),
     },
     metadata: {
         schemas: (connId) => api.request('GET', `/api/metadata/${connId}/schemas`),
@@ -131,6 +133,16 @@ function initMonaco() {
         // Ctrl+Enter to execute
         monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
             executeQuery();
+        });
+
+        // Ctrl+E to EXPLAIN
+        monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyE, () => {
+            executeExplain(false);
+        });
+
+        // Ctrl+Shift+E to EXPLAIN ANALYZE
+        monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyE, () => {
+            executeExplain(true);
         });
 
         // Register SQL autocomplete provider
@@ -919,10 +931,36 @@ async function executeQuery() {
     }
 }
 
+async function executeExplain(analyze = false) {
+    if (!state.activeConnectionId) {
+        updateStatus('No active connection. Double-click a connection in the tree.', true);
+        return;
+    }
+    const sql = getCurrentSql();
+    if (!sql.trim()) {
+        updateStatus('No SQL to execute', true);
+        return;
+    }
+
+    const label = analyze ? 'EXPLAIN ANALYZE' : 'EXPLAIN';
+    updateStatus(`Running ${label}...`);
+    document.getElementById('btn-run').disabled = true;
+
+    try {
+        const result = await api.query.explain(state.activeConnectionId, sql, analyze);
+        state.lastResult = { connectionId: state.activeConnectionId, sql, explain: true };
+        displayResult(result, label);
+    } catch (e) {
+        displayError(e.message);
+    } finally {
+        document.getElementById('btn-run').disabled = false;
+    }
+}
+
 // ============================================================
 // Results Display
 // ============================================================
-function displayResult(result) {
+function displayResult(result, resultLabel) {
     const container = document.getElementById('result-content');
 
     if (result.error) {
@@ -953,6 +991,12 @@ function displayResult(result) {
     const filterInput = document.getElementById('result-filter-input');
     if (filterWrap) filterWrap.style.display = '';
     if (filterInput) filterInput.value = '';
+
+    // Update result header label
+    const headerLabel = document.querySelector('#result-header > span:first-of-type');
+    if (headerLabel) {
+        headerLabel.textContent = resultLabel || 'Results';
+    }
 
     applyFilterAndSort();
 
@@ -1391,6 +1435,8 @@ async function loadConnections() {
 function initEventHandlers() {
     document.getElementById('btn-add-conn').onclick = () => showConnectionDialog();
     document.getElementById('btn-run').onclick = executeQuery;
+    document.getElementById('btn-explain').onclick = () => executeExplain(false);
+    document.getElementById('btn-explain-analyze').onclick = () => executeExplain(true);
     document.getElementById('btn-new-tab').onclick = () => addEditorTab();
     document.getElementById('btn-add-tab').onclick = () => addEditorTab();
     document.getElementById('btn-export').onclick = exportCsv;

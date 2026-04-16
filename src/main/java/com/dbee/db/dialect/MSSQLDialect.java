@@ -21,4 +21,20 @@ public class MSSQLDialect implements DatabaseDialect {
     public MetadataReader createMetadataReader(Connection connection) {
         return new JdbcMetadataReader(connection, true);
     }
+
+    @Override
+    public String getExplainQuery(String sql) {
+        // MSSQL uses SET SHOWPLAN_ALL ON before the query
+        return "SET SHOWPLAN_ALL ON";
+    }
+
+    @Override
+    public String getExplainAnalyzeQuery(String sql) {
+        return null; // MSSQL doesn't support EXPLAIN ANALYZE directly
+    }
+
+    @Override
+    public boolean supportsExplainAnalyze() {
+        return false;
+    }
 }

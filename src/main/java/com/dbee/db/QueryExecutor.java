@@ -54,6 +54,54 @@ public class QueryExecutor {
         return executeAsync(ds, sql, DEFAULT_MAX_ROWS);
     }
 
+    /**
+     * Execute EXPLAIN for Oracle: runs EXPLAIN PLAN FOR, then reads DBMS_XPLAN.DISPLAY
+     */
+    public QueryResult executeOracleExplain(DataSource ds, String explainPlanSql, String originalSql) {
+        long start = System.currentTimeMillis();
+        try (Connection conn = ds.getConnection();
+             Statement stmt = conn.createStatement()) {
+            // Step 1: Execute EXPLAIN PLAN FOR ...
+            stmt.execute(explainPlanSql);
+            // Step 2: Read the plan from DBMS_XPLAN
+            try (ResultSet rs = stmt.executeQuery(
+                    "SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY(NULL, NULL, 'ALL'))")) {
+                long elapsed = System.currentTimeMillis() - start;
+                return buildSelectResult(rs, elapsed);
+            }
+        } catch (SQLException e) {
+            long elapsed = System.currentTimeMillis() - start;
+            log.error("Oracle EXPLAIN failed: {}", e.getMessage());
+            return QueryResult.ofError(e.getMessage(), elapsed);
+        }
+    }
+
+    /**
+     * Execute EXPLAIN for MSSQL: SET SHOWPLAN_ALL ON, run query, SET SHOWPLAN_ALL OFF
+     */
+    public QueryResult executeMssqlExplain(DataSource ds, String sql) {
+        long start = System.currentTimeMillis();
+        try (Connection conn = ds.getConnection();
+             Statement stmt = conn.createStatement()) {
+            stmt.execute("SET SHOWPLAN_ALL ON");
+            try {
+                boolean isRs = stmt.execute(sql);
+                long elapsed = System.currentTimeMillis() - start;
+                if (isRs) {
+                    return buildSelectResult(stmt.getResultSet(), elapsed);
+                } else {
+                    return QueryResult.ofError("No execution plan returned", elapsed);
+                }
+            } finally {
+                try { stmt.execute("SET SHOWPLAN_ALL OFF"); } catch (Exception ignored) {}
+            }
+        } catch (SQLException e) {
+            long elapsed = System.currentTimeMillis() - start;
+            log.error("MSSQL EXPLAIN failed: {}", e.getMessage());
+            return QueryResult.ofError(e.getMessage(), elapsed);
+        }
+    }
+
     public void shutdown() {
         executor.shutdownNow();
     }

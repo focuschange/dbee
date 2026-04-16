@@ -1,8 +1,11 @@
 package com.dbee.service;
 
 import com.dbee.db.ConnectionManager;
+import com.dbee.db.DatabaseDialect;
+import com.dbee.db.DialectFactory;
 import com.dbee.db.QueryExecutor;
 import com.dbee.model.ConnectionInfo;
+import com.dbee.model.DatabaseType;
 import com.dbee.model.QueryHistory;
 import com.dbee.model.QueryResult;
 import org.springframework.stereotype.Service;
@@ -39,5 +42,40 @@ public class QueryService {
         ));
 
         return result;
+    }
+
+    public QueryResult explain(String connectionId, String sql, boolean analyze) {
+        ConnectionInfo info = connectionService.getConnection(connectionId);
+        DataSource ds = connectionManager.getOrCreate(info);
+        DatabaseDialect dialect = DialectFactory.getDialect(info.getDatabaseType());
+
+        if (analyze && !dialect.supportsExplainAnalyze()) {
+            return QueryResult.ofError(
+                    info.getDatabaseType().name() + " does not support EXPLAIN ANALYZE",
+                    0);
+        }
+
+        // Special handling for Oracle and MSSQL
+        if (info.getDatabaseType() == DatabaseType.ORACLE) {
+            String explainSql = dialect.getExplainQuery(sql);
+            return queryExecutor.executeOracleExplain(ds, explainSql, sql);
+        }
+
+        if (info.getDatabaseType() == DatabaseType.MSSQL) {
+            return queryExecutor.executeMssqlExplain(ds, sql);
+        }
+
+        // Standard EXPLAIN for other databases
+        String explainSql = analyze
+                ? dialect.getExplainAnalyzeQuery(sql)
+                : dialect.getExplainQuery(sql);
+
+        if (explainSql == null) {
+            return QueryResult.ofError(
+                    info.getDatabaseType().name() + " does not support this EXPLAIN type",
+                    0);
+        }
+
+        return queryExecutor.execute(ds, explainSql, 10000);
     }
 }

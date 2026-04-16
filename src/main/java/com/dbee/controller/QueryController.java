@@ -1,5 +1,6 @@
 package com.dbee.controller;
 
+import com.dbee.controller.dto.ExplainRequest;
 import com.dbee.controller.dto.QueryRequest;
 import com.dbee.controller.dto.QueryResultDto;
 import com.dbee.model.QueryResult;
@@ -22,6 +23,13 @@ public class QueryController {
     public QueryResultDto execute(@RequestBody QueryRequest request) {
         QueryResult result = queryService.execute(
                 request.connectionId(), request.sql(), request.getMaxRowsOrDefault());
+        return QueryResultDto.from(result);
+    }
+
+    @PostMapping("/explain")
+    public QueryResultDto explain(@RequestBody ExplainRequest request) {
+        QueryResult result = queryService.explain(
+                request.connectionId(), request.sql(), request.analyze());
         return QueryResultDto.from(result);
     }
 }

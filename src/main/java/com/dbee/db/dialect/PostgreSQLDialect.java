@@ -21,4 +21,19 @@ public class PostgreSQLDialect implements DatabaseDialect {
     public MetadataReader createMetadataReader(Connection connection) {
         return new JdbcMetadataReader(connection);
     }
+
+    @Override
+    public String getExplainQuery(String sql) {
+        return "EXPLAIN " + sql;
+    }
+
+    @Override
+    public String getExplainAnalyzeQuery(String sql) {
+        return "EXPLAIN ANALYZE " + sql;
+    }
+
+    @Override
+    public boolean supportsExplainAnalyze() {
+        return true;
+    }
 }

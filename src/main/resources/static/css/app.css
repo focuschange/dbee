@@ -327,6 +327,33 @@ body {
     border-color: var(--border-default);
 }
 
+/* Explain dropdown button group */
+.btn-dropdown-wrap {
+    display: inline-flex;
+    align-items: center;
+    position: relative;
+}
+
+.btn-dropdown-wrap .btn:first-child {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+    border-right: none;
+}
+
+.btn-explain-analyze {
+    padding: 6px 4px !important;
+    min-width: 24px;
+    border-top-left-radius: 0 !important;
+    border-bottom-left-radius: 0 !important;
+    border-left: 1px solid var(--border-subtle) !important;
+    gap: 0 !important;
+}
+
+.btn-explain-analyze:hover {
+    background: var(--accent-subtle) !important;
+    color: var(--accent) !important;
+}
+
 .btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
