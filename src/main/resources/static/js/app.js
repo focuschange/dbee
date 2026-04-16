@@ -518,7 +518,44 @@ function getCurrentSql() {
 function renderTree() {
     const container = document.getElementById('schema-tree');
     container.innerHTML = '';
+
+    // Group connections by their group property
+    const groups = {};
+    const ungrouped = [];
     state.connections.forEach(conn => {
+        const group = conn.properties?.group;
+        if (group) {
+            if (!groups[group]) groups[group] = [];
+            groups[group].push(conn);
+        } else {
+            ungrouped.push(conn);
+        }
+    });
+
+    // Render grouped connections
+    for (const [groupName, conns] of Object.entries(groups).sort()) {
+        const groupNode = document.createElement('div');
+        groupNode.className = 'tree-node tree-group-node';
+        groupNode.innerHTML = `
+            <div class="tree-node-content tree-group-header">
+                <span class="tree-arrow">&#9654;</span>
+                <span class="tree-icon icon-group">&#9830;</span>
+                <span class="tree-label tree-group-label">${escapeHtml(groupName)}</span>
+                <span class="tree-badge group-count">${conns.length}</span>
+            </div>
+            <div class="tree-children"></div>
+        `;
+        const children = groupNode.querySelector('.tree-children');
+        conns.forEach(conn => children.appendChild(createConnectionNode(conn)));
+
+        const header = groupNode.querySelector('.tree-group-header');
+        header.onclick = () => groupNode.classList.toggle('expanded');
+        groupNode.classList.add('expanded'); // start expanded
+        container.appendChild(groupNode);
+    }
+
+    // Render ungrouped connections
+    ungrouped.forEach(conn => {
         container.appendChild(createConnectionNode(conn));
     });
 }
@@ -1811,6 +1848,7 @@ function showConnectionDialog(existing) {
     document.getElementById('conn-dialog-title').textContent = existing ? 'Edit Connection' : 'New Connection';
 
     document.getElementById('conn-name').value = existing ? existing.name : '';
+    document.getElementById('conn-group').value = existing?.properties?.group || '';
     document.getElementById('conn-type').value = existing ? existing.databaseType : 'MYSQL';
     document.getElementById('conn-host').value = existing ? (existing.host || 'localhost') : 'localhost';
     document.getElementById('conn-port').value = existing ? existing.port : DEFAULT_PORTS['MYSQL'];
@@ -1874,6 +1912,10 @@ function buildConnectionInfo() {
         password: document.getElementById('conn-password').value,
         properties: {}
     };
+    // Group
+    const group = document.getElementById('conn-group').value.trim();
+    if (group) info.properties.group = group;
+
     if (type === 'ATHENA') {
         info.properties.region = document.getElementById('conn-region').value;
         info.properties.s3Output = document.getElementById('conn-s3output').value;
