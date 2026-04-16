@@ -563,6 +563,12 @@ body {
     background: var(--bg-base);
     color: var(--text-bright);
 }
+.tab-dirty-dot { color: var(--warning); margin-left: 4px; font-size: 8px; }
+.tab.dirty .tab-label { font-style: italic; }
+.tab-rename-input {
+    background: var(--bg-base); color: var(--text-primary); border: 1px solid var(--accent);
+    border-radius: 3px; padding: 0 4px; font-size: 12px; width: 100px; outline: none;
+}
 
 .tab.active::after {
     content: '';

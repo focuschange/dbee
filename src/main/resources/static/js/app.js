@@ -461,7 +461,13 @@ function addEditorTab() {
     editorCounter++;
     const id = 'tab-' + editorCounter;
     const model = monaco.editor.createModel('', 'sql');
-    state.editors.push({ id, name: 'Query ' + editorCounter, model });
+    const tab = { id, name: 'Query ' + editorCounter, model, savedContent: '' };
+    // Track dirty state
+    model.onDidChangeContent(() => {
+        tab.dirty = model.getValue() !== tab.savedContent;
+        renderTabs();
+    });
+    state.editors.push(tab);
     renderTabs();
     switchTab(id);
 }
@@ -494,12 +500,30 @@ function renderTabs() {
     tabList.innerHTML = '';
     state.editors.forEach(tab => {
         const div = document.createElement('div');
-        div.className = 'tab' + (tab.id === state.activeEditorId ? ' active' : '');
+        div.className = 'tab' + (tab.id === state.activeEditorId ? ' active' : '') + (tab.dirty ? ' dirty' : '');
+        const dirtyDot = tab.dirty ? '<span class="tab-dirty-dot">●</span>' : '';
         div.innerHTML = `
-            <span class="tab-label">${tab.name}</span>
+            <span class="tab-label">${escapeHtml(tab.name)}${dirtyDot}</span>
             ${state.editors.length > 1 ? '<span class="tab-close">&times;</span>' : ''}
         `;
         div.querySelector('.tab-label').onclick = () => switchTab(tab.id);
+        // Double-click to rename tab
+        div.querySelector('.tab-label').ondblclick = (e) => {
+            e.stopPropagation();
+            const label = e.currentTarget;
+            const input = document.createElement('input');
+            input.className = 'tab-rename-input';
+            input.value = tab.name;
+            label.replaceWith(input);
+            input.focus();
+            input.select();
+            const finish = () => {
+                tab.name = input.value.trim() || tab.name;
+                renderTabs();
+            };
+            input.onblur = finish;
+            input.onkeydown = (ke) => { if (ke.key === 'Enter') input.blur(); if (ke.key === 'Escape') { input.value = tab.name; input.blur(); } };
+        };
         const closeBtn = div.querySelector('.tab-close');
         if (closeBtn) closeBtn.onclick = (e) => { e.stopPropagation(); closeTab(tab.id); };
         tabList.appendChild(div);
