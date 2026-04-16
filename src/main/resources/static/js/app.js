@@ -2561,11 +2561,24 @@ function setTheme(theme) {
 }
 
 function initTheme() {
-    const saved = localStorage.getItem('dbee-theme') || 'normal';
-    setTheme(saved);
+    const saved = localStorage.getItem('dbee-theme');
+    if (saved) {
+        setTheme(saved);
+    } else {
+        // Auto-detect OS dark mode
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        setTheme(prefersDark ? 'dark' : 'light');
+    }
 
     document.querySelectorAll('.theme-btn').forEach(btn => {
         btn.onclick = () => setTheme(btn.dataset.theme);
+    });
+
+    // Listen for OS theme changes
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+        if (!localStorage.getItem('dbee-theme')) {
+            setTheme(e.matches ? 'dark' : 'light');
+        }
     });
 }
 
