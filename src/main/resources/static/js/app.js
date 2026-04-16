@@ -48,6 +48,12 @@ const api = {
         autocomplete: (connId) => api.request('GET', `/api/metadata/${connId}/autocomplete`),
         primaryKeys: (connId, schema, table) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/tables/${encodeURIComponent(table)}/primarykeys`),
     },
+    llm: {
+        getSettings: () => api.request('GET', '/api/llm/settings'),
+        saveSettings: (settings) => api.request('POST', '/api/llm/settings', settings),
+        testConnection: (settings) => api.request('POST', '/api/llm/test', settings),
+        getProviders: () => api.request('GET', '/api/llm/providers'),
+    },
     tunnels: {
         list: () => api.request('GET', '/api/tunnels'),
         create: (info) => api.request('POST', '/api/tunnels', info),
@@ -2006,6 +2012,123 @@ function initNotesManager() {
 }
 
 // ============================================================
+// AI Settings
+// ============================================================
+const LLM_DEFAULTS = {
+    OPENAI: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o', needsKey: true },
+    CLAUDE: { baseUrl: 'https://api.anthropic.com/v1', model: 'claude-sonnet-4-20250514', needsKey: true },
+    OLLAMA: { baseUrl: 'http://localhost:11434', model: 'llama3', needsKey: false },
+};
+
+async function showAiSettingsDialog() {
+    const dialog = document.getElementById('ai-settings-dialog');
+    dialog.style.display = 'flex';
+
+    try {
+        const settings = await api.llm.getSettings();
+        document.getElementById('ai-provider').value = settings.provider || 'OPENAI';
+        document.getElementById('ai-apikey').value = settings.apiKey || '';
+        document.getElementById('ai-baseurl').value = settings.baseUrl || '';
+        document.getElementById('ai-model').value = settings.model || '';
+        document.getElementById('ai-temperature').value = settings.temperature ?? 0.3;
+        document.getElementById('ai-temperature-value').textContent = settings.temperature ?? 0.3;
+        updateAiProviderFields();
+    } catch (e) {
+        console.error('Failed to load AI settings:', e);
+    }
+
+    document.getElementById('ai-test-result').style.display = 'none';
+}
+
+function closeAiSettingsDialog() {
+    document.getElementById('ai-settings-dialog').style.display = 'none';
+}
+
+function updateAiProviderFields() {
+    const provider = document.getElementById('ai-provider').value;
+    const defaults = LLM_DEFAULTS[provider];
+    const keyRow = document.getElementById('row-ai-apikey');
+
+    if (defaults) {
+        // Only update baseUrl/model if they match a different provider's defaults (i.e., user hasn't customized)
+        const currentBase = document.getElementById('ai-baseurl').value;
+        const isDefaultBase = Object.values(LLM_DEFAULTS).some(d => d.baseUrl === currentBase) || !currentBase;
+        if (isDefaultBase) {
+            document.getElementById('ai-baseurl').value = defaults.baseUrl;
+        }
+
+        const currentModel = document.getElementById('ai-model').value;
+        const isDefaultModel = Object.values(LLM_DEFAULTS).some(d => d.model === currentModel) || !currentModel;
+        if (isDefaultModel) {
+            document.getElementById('ai-model').value = defaults.model;
+        }
+
+        keyRow.style.display = defaults.needsKey ? '' : 'none';
+    }
+}
+
+function getAiSettingsFromForm() {
+    return {
+        provider: document.getElementById('ai-provider').value,
+        apiKey: document.getElementById('ai-apikey').value,
+        baseUrl: document.getElementById('ai-baseurl').value,
+        model: document.getElementById('ai-model').value,
+        temperature: parseFloat(document.getElementById('ai-temperature').value),
+    };
+}
+
+async function saveAiSettings() {
+    const settings = getAiSettingsFromForm();
+    try {
+        await api.llm.saveSettings(settings);
+        updateStatus('AI settings saved');
+        closeAiSettingsDialog();
+    } catch (e) {
+        updateStatus('Failed to save AI settings: ' + e.message, true);
+    }
+}
+
+async function testAiConnection() {
+    const settings = getAiSettingsFromForm();
+    const resultEl = document.getElementById('ai-test-result');
+    resultEl.style.display = 'block';
+    resultEl.className = 'ai-test-result ai-test-loading';
+    resultEl.textContent = 'Testing connection...';
+
+    document.getElementById('btn-test-ai').disabled = true;
+
+    try {
+        const result = await api.llm.testConnection(settings);
+        if (result.success) {
+            resultEl.className = 'ai-test-result ai-test-success';
+            resultEl.textContent = result.message;
+        } else {
+            resultEl.className = 'ai-test-result ai-test-error';
+            resultEl.textContent = result.message;
+        }
+    } catch (e) {
+        resultEl.className = 'ai-test-result ai-test-error';
+        resultEl.textContent = 'Test failed: ' + e.message;
+    } finally {
+        document.getElementById('btn-test-ai').disabled = false;
+    }
+}
+
+function initAiSettings() {
+    document.getElementById('btn-ai-settings').onclick = showAiSettingsDialog;
+    document.getElementById('ai-settings-dialog-close').onclick = closeAiSettingsDialog;
+    document.getElementById('ai-settings-dialog').querySelector('.modal-backdrop').onclick = closeAiSettingsDialog;
+    document.getElementById('btn-cancel-ai').onclick = closeAiSettingsDialog;
+    document.getElementById('btn-save-ai').onclick = saveAiSettings;
+    document.getElementById('btn-test-ai').onclick = testAiConnection;
+
+    document.getElementById('ai-provider').onchange = updateAiProviderFields;
+    document.getElementById('ai-temperature').oninput = (e) => {
+        document.getElementById('ai-temperature-value').textContent = e.target.value;
+    };
+}
+
+// ============================================================
 // Query History
 // ============================================================
 function showHistoryDialog() {
@@ -2155,6 +2278,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initTunnelManager();
     initNotesManager();
     initHistoryManager();
+    initAiSettings();
     initResizers();
     initMonaco();
     loadConnections();

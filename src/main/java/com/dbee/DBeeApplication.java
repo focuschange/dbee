@@ -1,6 +1,7 @@
 package com.dbee;
 
 import com.dbee.config.ConnectionConfig;
+import com.dbee.config.LlmConfig;
 import com.dbee.config.NoteConfig;
 import com.dbee.config.QueryHistoryConfig;
 import com.dbee.config.SshTunnelConfig;
@@ -46,6 +47,11 @@ public class DBeeApplication {
     @Bean
     public QueryHistoryConfig queryHistoryConfig() {
         return new QueryHistoryConfig();
+    }
+
+    @Bean
+    public LlmConfig llmConfig() {
+        return new LlmConfig();
     }
 
     @PreDestroy
