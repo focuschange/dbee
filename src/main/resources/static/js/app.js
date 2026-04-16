@@ -2972,6 +2972,50 @@ function initCommandPalette() {
 }
 
 // ============================================================
+// Data Import
+// ============================================================
+function showImportDialog() {
+    if (!state.activeConnectionId) { updateStatus('No active connection', true); return; }
+    document.getElementById('import-dialog').style.display = 'flex';
+    document.getElementById('import-result').style.display = 'none';
+    document.getElementById('import-type').onchange = () => {
+        document.getElementById('import-table-row').style.display =
+            document.getElementById('import-type').value === 'csv' ? '' : 'none';
+    };
+}
+
+async function executeImport() {
+    const type = document.getElementById('import-type').value;
+    const fileInput = document.getElementById('import-file');
+    if (!fileInput.files.length) { updateStatus('No file selected', true); return; }
+
+    const formData = new FormData();
+    formData.append('connectionId', state.activeConnectionId);
+    formData.append('file', fileInput.files[0]);
+    if (type === 'csv') {
+        const table = document.getElementById('import-table').value.trim();
+        if (!table) { updateStatus('Enter target table name', true); return; }
+        formData.append('table', table);
+    }
+
+    const resultDiv = document.getElementById('import-result');
+    resultDiv.style.display = 'block';
+    resultDiv.innerHTML = '<span style="color:var(--accent)">Importing...</span>';
+
+    try {
+        const res = await fetch(`/api/import/${type}`, { method: 'POST', body: formData });
+        const data = await res.json();
+        if (data.success) {
+            resultDiv.innerHTML = `<span style="color:var(--success)">Success! ${data.executed || data.inserted || 0} statements executed.</span>`;
+        } else {
+            resultDiv.innerHTML = `<span style="color:var(--error)">Completed with ${data.errors} errors. ${data.executed || data.inserted || 0} succeeded.</span>`;
+        }
+    } catch (e) {
+        resultDiv.innerHTML = `<span style="color:var(--error)">Import failed: ${e.message}</span>`;
+    }
+}
+
+// ============================================================
 // Editor Settings
 // ============================================================
 function showEditorSettings() {
