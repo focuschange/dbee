@@ -37,4 +37,10 @@ public class OracleDialect implements DatabaseDialect {
     public boolean supportsExplainAnalyze() {
         return false;
     }
+
+    @Override
+    public String getShowCreateTableQuery(String schema, String table) {
+        String owner = schema != null ? "'" + schema + "'" : "USER";
+        return "SELECT DBMS_METADATA.GET_DDL('TABLE', '" + table + "', " + owner + ") AS DDL FROM DUAL";
+    }
 }

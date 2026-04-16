@@ -52,6 +52,8 @@ const api = {
         events: (connId, schema) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/events`),
         autocomplete: (connId) => api.request('GET', `/api/metadata/${connId}/autocomplete`),
         primaryKeys: (connId, schema, table) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/tables/${encodeURIComponent(table)}/primarykeys`),
+        ddl: (connId, schema, table) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/tables/${encodeURIComponent(table)}/ddl`),
+        indexes: (connId, schema, table) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/tables/${encodeURIComponent(table)}/indexes`),
     },
     llm: {
         getSettings: () => api.request('GET', '/api/llm/settings'),
@@ -888,6 +890,12 @@ function createTableNode(connId, schema, table) {
         }
     };
 
+    // Right-click context for DDL/Indexes
+    content.oncontextmenu = (e) => {
+        e.preventDefault();
+        showTableContextMenu(e, connId, schema, table.name);
+    };
+
     node.querySelector('.tree-arrow').onclick = (e) => {
         e.stopPropagation();
         if (!loaded) {
@@ -934,6 +942,81 @@ function selectTreeNode(contentEl) {
     if (selectedNodeEl) selectedNodeEl.classList.remove('selected');
     contentEl.classList.add('selected');
     selectedNodeEl = contentEl;
+}
+
+function showTableContextMenu(e, connId, schema, tableName) {
+    // Remove any existing table context menu
+    let existing = document.getElementById('table-ctx-menu');
+    if (existing) existing.remove();
+
+    const menu = document.createElement('div');
+    menu.id = 'table-ctx-menu';
+    menu.className = 'context-menu';
+    menu.style.display = 'block';
+    menu.style.left = e.clientX + 'px';
+    menu.style.top = e.clientY + 'px';
+    menu.innerHTML = `
+        <div class="ctx-item" data-action="select-top">SELECT * (LIMIT 100)</div>
+        <div class="ctx-separator"></div>
+        <div class="ctx-item" data-action="show-ddl">Show CREATE TABLE</div>
+        <div class="ctx-item" data-action="show-indexes">Show Indexes</div>
+    `;
+    document.body.appendChild(menu);
+
+    menu.querySelector('[data-action="select-top"]').onclick = () => {
+        if (monacoEditor) monacoEditor.setValue(`SELECT * FROM ${schema}.${tableName} LIMIT 100;`);
+        menu.remove();
+    };
+    menu.querySelector('[data-action="show-ddl"]').onclick = async () => {
+        menu.remove();
+        await showTableDdl(connId, schema, tableName);
+    };
+    menu.querySelector('[data-action="show-indexes"]').onclick = async () => {
+        menu.remove();
+        await showTableIndexes(connId, schema, tableName);
+    };
+
+    const close = () => { menu.remove(); document.removeEventListener('click', close); };
+    setTimeout(() => document.addEventListener('click', close), 0);
+}
+
+async function showTableDdl(connId, schema, tableName) {
+    try {
+        const result = await api.metadata.ddl(connId, schema, tableName);
+        if (monacoEditor) {
+            monacoEditor.setValue(result.ddl || '-- No DDL available');
+            monacoEditor.focus();
+            updateStatus(`DDL loaded for ${tableName}`);
+        }
+    } catch (e) {
+        updateStatus('Failed to load DDL: ' + e.message, true);
+    }
+}
+
+async function showTableIndexes(connId, schema, tableName) {
+    try {
+        const indexes = await api.metadata.indexes(connId, schema, tableName);
+        if (indexes.length === 0) {
+            updateStatus(`No indexes found on ${tableName}`);
+            return;
+        }
+        // Display as a formatted list in the editor
+        let sql = `-- Indexes on ${schema}.${tableName}\n\n`;
+        const grouped = {};
+        indexes.forEach(idx => {
+            if (!grouped[idx.name]) grouped[idx.name] = { unique: idx.unique, columns: [] };
+            grouped[idx.name].columns.push(idx.columnName);
+        });
+        for (const [name, info] of Object.entries(grouped)) {
+            sql += `-- ${info.unique ? 'UNIQUE ' : ''}INDEX: ${name} (${info.columns.join(', ')})\n`;
+        }
+        if (monacoEditor) {
+            monacoEditor.setValue(sql);
+            monacoEditor.focus();
+        }
+    } catch (e) {
+        updateStatus('Failed to load indexes: ' + e.message, true);
+    }
 }
 
 // ============================================================

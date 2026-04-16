@@ -48,6 +48,21 @@ public class MetadataController {
         return metadataService.getPrimaryKeys(connectionId, schema, table);
     }
 
+    @GetMapping("/{connectionId}/schemas/{schema}/tables/{table}/ddl")
+    public java.util.Map<String, String> getTableDdl(@PathVariable String connectionId,
+                                                      @PathVariable String schema,
+                                                      @PathVariable String table) {
+        String ddl = metadataService.getTableDdl(connectionId, schema, table);
+        return java.util.Map.of("ddl", ddl);
+    }
+
+    @GetMapping("/{connectionId}/schemas/{schema}/tables/{table}/indexes")
+    public List<IndexInfo> getIndexes(@PathVariable String connectionId,
+                                      @PathVariable String schema,
+                                      @PathVariable String table) {
+        return metadataService.getIndexes(connectionId, schema, table);
+    }
+
     @GetMapping("/{connectionId}/schemas/{schema}/routines")
     public List<RoutineInfo> getRoutines(@PathVariable String connectionId, @PathVariable String schema) {
         return metadataService.getRoutines(connectionId, schema);

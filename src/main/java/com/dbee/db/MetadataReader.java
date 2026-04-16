@@ -14,4 +14,8 @@ public interface MetadataReader {
     default List<PrimaryKeyInfo> getPrimaryKeys(String schema, String table) {
         return List.of();
     }
+
+    default List<IndexInfo> getIndexes(String schema, String table) {
+        return List.of();
+    }
 }

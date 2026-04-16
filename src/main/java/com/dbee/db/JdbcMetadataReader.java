@@ -141,6 +141,31 @@ public class JdbcMetadataReader implements MetadataReader {
     }
 
     @Override
+    public List<IndexInfo> getIndexes(String schema, String table) {
+        List<IndexInfo> indexes = new ArrayList<>();
+        try {
+            DatabaseMetaData meta = connection.getMetaData();
+            String catalog = useCatalogAsSchema ? schema : null;
+            String schemaPattern = useCatalogAsSchema ? null : schema;
+            try (ResultSet rs = meta.getIndexInfo(catalog, schemaPattern, table, false, false)) {
+                while (rs.next()) {
+                    String indexName = rs.getString("INDEX_NAME");
+                    if (indexName == null) continue;
+                    indexes.add(new IndexInfo(
+                            indexName,
+                            rs.getString("COLUMN_NAME"),
+                            !rs.getBoolean("NON_UNIQUE"),
+                            rs.getInt("ORDINAL_POSITION"),
+                            rs.getInt("TYPE") == DatabaseMetaData.tableIndexStatistic ? "STATISTIC" : "INDEX"));
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to read indexes", e);
+        }
+        return indexes;
+    }
+
+    @Override
     public List<EventInfo> getEvents(String schema) {
         List<EventInfo> events = new ArrayList<>();
         try {

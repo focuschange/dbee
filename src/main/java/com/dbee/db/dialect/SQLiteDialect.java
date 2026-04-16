@@ -36,4 +36,9 @@ public class SQLiteDialect implements DatabaseDialect {
     public boolean supportsExplainAnalyze() {
         return false;
     }
+
+    @Override
+    public String getShowCreateTableQuery(String schema, String table) {
+        return "SELECT sql FROM sqlite_master WHERE type='table' AND name='" + table + "'";
+    }
 }

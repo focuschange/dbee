@@ -32,4 +32,12 @@ public interface DatabaseDialect {
     default boolean supportsExplainAnalyze() {
         return false;
     }
+
+    /**
+     * Returns SQL to get the DDL (CREATE TABLE) for a table.
+     * Returns null if not supported natively.
+     */
+    default String getShowCreateTableQuery(String schema, String table) {
+        return null;
+    }
 }

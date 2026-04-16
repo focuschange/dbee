@@ -36,4 +36,9 @@ public class AthenaDialect implements DatabaseDialect {
     public boolean supportsExplainAnalyze() {
         return true;
     }
+
+    @Override
+    public String getShowCreateTableQuery(String schema, String table) {
+        return "SHOW CREATE TABLE " + (schema != null ? "`" + schema + "`.`" + table + "`" : "`" + table + "`");
+    }
 }

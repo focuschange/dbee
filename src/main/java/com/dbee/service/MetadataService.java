@@ -117,6 +117,65 @@ public class MetadataService {
         }
     }
 
+    public List<IndexInfo> getIndexes(String connectionId, String schema, String table) {
+        ConnectionInfo info = connectionService.getConnection(connectionId);
+        DataSource ds = connectionManager.getOrCreate(info);
+        try (Connection conn = ds.getConnection()) {
+            MetadataReader reader = DialectFactory.getDialect(info.getDatabaseType())
+                    .createMetadataReader(conn);
+            return reader.getIndexes(schema, table);
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to read indexes: " + e.getMessage(), e);
+        }
+    }
+
+    public String getTableDdl(String connectionId, String schema, String table) {
+        ConnectionInfo info = connectionService.getConnection(connectionId);
+        DataSource ds = connectionManager.getOrCreate(info);
+        var dialect = DialectFactory.getDialect(info.getDatabaseType());
+        String ddlQuery = dialect.getShowCreateTableQuery(schema, table);
+
+        if (ddlQuery == null) {
+            // Reconstruct DDL from metadata for databases without native SHOW CREATE TABLE
+            return reconstructDdl(connectionId, schema, table);
+        }
+
+        try (Connection conn = ds.getConnection();
+             var stmt = conn.createStatement();
+             var rs = stmt.executeQuery(ddlQuery)) {
+            if (rs.next()) {
+                // MySQL returns 2 columns: Table, Create Table
+                int colCount = rs.getMetaData().getColumnCount();
+                return colCount >= 2 ? rs.getString(2) : rs.getString(1);
+            }
+            return "-- No DDL found";
+        } catch (SQLException e) {
+            return "-- Error: " + e.getMessage();
+        }
+    }
+
+    private String reconstructDdl(String connectionId, String schema, String table) {
+        var columns = getColumns(connectionId, schema, table);
+        var pks = getPrimaryKeys(connectionId, schema, table);
+        StringBuilder sb = new StringBuilder();
+        sb.append("CREATE TABLE ").append(table).append(" (\n");
+        for (int i = 0; i < columns.size(); i++) {
+            var col = columns.get(i);
+            sb.append("  ").append(col.name()).append(" ").append(col.typeName());
+            if (col.size() > 0) sb.append("(").append(col.size()).append(")");
+            if (!col.nullable()) sb.append(" NOT NULL");
+            if (i < columns.size() - 1 || !pks.isEmpty()) sb.append(",");
+            sb.append("\n");
+        }
+        if (!pks.isEmpty()) {
+            sb.append("  PRIMARY KEY (");
+            sb.append(String.join(", ", pks.stream().map(PrimaryKeyInfo::columnName).toList()));
+            sb.append(")\n");
+        }
+        sb.append(");");
+        return sb.toString();
+    }
+
     public List<EventInfo> getEvents(String connectionId, String schema) {
         ConnectionInfo info = connectionService.getConnection(connectionId);
         DataSource ds = connectionManager.getOrCreate(info);
