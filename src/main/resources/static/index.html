@@ -522,6 +522,25 @@
         </div>
     </div>
 
+    <!-- Cell Viewer Modal -->
+    <div id="cell-viewer-dialog" class="modal" style="display:none;">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="cell-viewer-title">Cell Value</h3>
+                <button class="modal-close" id="cell-viewer-close">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="cell-viewer-body">
+                <pre id="cell-viewer-content" class="cell-viewer-content"></pre>
+            </div>
+            <div class="form-actions">
+                <button type="button" id="btn-cell-copy" class="btn btn-primary btn-sm">Copy</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Saved Queries Modal -->
     <div id="saved-queries-dialog" class="modal" style="display:none;">
         <div class="modal-backdrop"></div>

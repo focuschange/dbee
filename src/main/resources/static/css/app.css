@@ -796,6 +796,24 @@ kbd {
     opacity: 0.6;
 }
 
+/* Cell viewer */
+.cell-viewer-body { padding: 0 20px 12px; }
+.cell-viewer-content {
+    background: var(--bg-base);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    padding: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-primary);
+    max-height: 400px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0;
+}
+
 /* Column resize handle */
 .result-table th { position: relative; }
 .col-resize-handle {

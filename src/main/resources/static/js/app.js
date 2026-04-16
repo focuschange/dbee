@@ -1273,6 +1273,25 @@ function renderResultTable(rows, totalRows) {
         };
     });
 
+    // Attach cell click for full value viewer
+    container.querySelectorAll('.result-table tbody td').forEach(td => {
+        td.onclick = (e) => {
+            if (td.classList.contains('cell-editing')) return; // skip if editing
+            if (e.detail === 2) return; // skip double-click (editing)
+            const rowIdx = parseInt(td.parentElement.dataset.rowIdx);
+            const colIdx = Array.from(td.parentElement.children).indexOf(td);
+            if (isNaN(rowIdx) || colIdx < 0) return;
+            const val = state.resultData.rows[rowIdx]?.[colIdx];
+            const colName = columnNames[colIdx] || '';
+            const typeName = typeNames[colIdx] || '';
+            // Only show viewer for long text, JSON, or NULL
+            const str = val === null ? null : String(val);
+            if (val === null || (str && str.length > 50) || /JSON/i.test(typeName)) {
+                showCellViewer(val, colName, typeName);
+            }
+        };
+    });
+
     // Attach column resize handlers
     container.querySelectorAll('.col-resize-handle').forEach(handle => {
         handle.onmousedown = (e) => {
@@ -2639,6 +2658,33 @@ function initAiSettings() {
     document.getElementById('ai-provider').onchange = updateAiProviderFields;
     document.getElementById('ai-temperature').oninput = (e) => {
         document.getElementById('ai-temperature-value').textContent = e.target.value;
+    };
+}
+
+// ============================================================
+// Cell Viewer
+// ============================================================
+function showCellViewer(value, columnName, typeName) {
+    const dialog = document.getElementById('cell-viewer-dialog');
+    const title = document.getElementById('cell-viewer-title');
+    const content = document.getElementById('cell-viewer-content');
+
+    title.textContent = columnName + (typeName ? ` (${typeName})` : '');
+
+    // Try to format JSON
+    let displayVal = value === null ? 'NULL' : String(value);
+    if (typeName && /JSON/i.test(typeName)) {
+        try { displayVal = JSON.stringify(JSON.parse(displayVal), null, 2); } catch (e) { /* keep as-is */ }
+    }
+
+    content.textContent = displayVal;
+    dialog.style.display = 'flex';
+
+    document.getElementById('cell-viewer-close').onclick = () => dialog.style.display = 'none';
+    dialog.querySelector('.modal-backdrop').onclick = () => dialog.style.display = 'none';
+    document.getElementById('btn-cell-copy').onclick = () => {
+        navigator.clipboard.writeText(displayVal);
+        updateStatus('Copied to clipboard');
     };
 }
 
