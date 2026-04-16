@@ -32,8 +32,9 @@ const api = {
         disconnect: (id) => api.request('POST', `/api/connections/${id}/disconnect`),
     },
     query: {
-        execute: (connectionId, sql, maxRows = 1000) =>
-            api.request('POST', '/api/query/execute', { connectionId, sql, maxRows }),
+        execute: (connectionId, sql, maxRows = 1000, executionId = null) =>
+            api.request('POST', '/api/query/execute', { connectionId, sql, maxRows, executionId }),
+        cancel: (executionId) => api.request('POST', `/api/query/cancel/${executionId}`),
         explain: (connectionId, sql, analyze = false) =>
             api.request('POST', '/api/query/explain', { connectionId, sql, analyze }),
         updateCell: (connectionId, schema, table, primaryKeys, column, value) =>
@@ -933,17 +934,54 @@ async function executeQuery() {
         return;
     }
 
+    const executionId = 'exec-' + Date.now();
+    state.currentExecutionId = executionId;
+
     updateStatus('Executing...');
     document.getElementById('btn-run').disabled = true;
+    showCancelButton(true, executionId);
 
     try {
-        const result = await api.query.execute(state.activeConnectionId, sql);
+        const result = await api.query.execute(state.activeConnectionId, sql, 1000, executionId);
         state.lastResult = { connectionId: state.activeConnectionId, sql };
         displayResult(result);
     } catch (e) {
         displayError(e.message);
     } finally {
+        state.currentExecutionId = null;
         document.getElementById('btn-run').disabled = false;
+        showCancelButton(false);
+    }
+}
+
+function showCancelButton(show, executionId) {
+    let cancelBtn = document.getElementById('btn-cancel-query');
+    if (show) {
+        if (!cancelBtn) {
+            cancelBtn = document.createElement('button');
+            cancelBtn.id = 'btn-cancel-query';
+            cancelBtn.className = 'btn btn-ghost btn-cancel-query';
+            cancelBtn.title = 'Cancel Query';
+            cancelBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg> Cancel`;
+            const runBtn = document.getElementById('btn-run');
+            runBtn.parentElement.insertBefore(cancelBtn, runBtn.nextSibling);
+        }
+        cancelBtn.style.display = '';
+        cancelBtn.disabled = false;
+        cancelBtn.onclick = () => cancelQuery(executionId);
+    } else {
+        if (cancelBtn) cancelBtn.style.display = 'none';
+    }
+}
+
+async function cancelQuery(executionId) {
+    try {
+        const cancelBtn = document.getElementById('btn-cancel-query');
+        if (cancelBtn) cancelBtn.disabled = true;
+        await api.query.cancel(executionId);
+        updateStatus('Query cancellation requested...');
+    } catch (e) {
+        console.error('Cancel failed:', e);
     }
 }
 

@@ -21,29 +21,72 @@ public class QueryExecutor {
         return t;
     });
 
+    // Track active statements for cancellation
+    private final java.util.Map<String, Statement> activeStatements = new java.util.concurrent.ConcurrentHashMap<>();
+
     public QueryResult execute(DataSource ds, String sql) {
         return execute(ds, sql, DEFAULT_MAX_ROWS);
     }
 
     public QueryResult execute(DataSource ds, String sql, int maxRows) {
+        return execute(ds, sql, maxRows, null);
+    }
+
+    public QueryResult execute(DataSource ds, String sql, int maxRows, String executionId) {
         long start = System.currentTimeMillis();
         try (Connection conn = ds.getConnection();
              Statement stmt = conn.createStatement()) {
             stmt.setMaxRows(maxRows);
 
-            boolean isResultSet = stmt.execute(sql.trim());
-            long elapsed = System.currentTimeMillis() - start;
+            if (executionId != null) {
+                activeStatements.put(executionId, stmt);
+            }
 
-            if (isResultSet) {
-                return buildSelectResult(stmt.getResultSet(), elapsed);
-            } else {
-                return QueryResult.ofUpdate(stmt.getUpdateCount(), elapsed);
+            try {
+                boolean isResultSet = stmt.execute(sql.trim());
+                long elapsed = System.currentTimeMillis() - start;
+
+                if (isResultSet) {
+                    return buildSelectResult(stmt.getResultSet(), elapsed);
+                } else {
+                    return QueryResult.ofUpdate(stmt.getUpdateCount(), elapsed);
+                }
+            } finally {
+                if (executionId != null) {
+                    activeStatements.remove(executionId);
+                }
             }
         } catch (SQLException e) {
             long elapsed = System.currentTimeMillis() - start;
-            log.error("Query execution failed: {}", e.getMessage());
-            return QueryResult.ofError(e.getMessage(), elapsed);
+            if (executionId != null) {
+                activeStatements.remove(executionId);
+            }
+            String msg = e.getMessage();
+            if (msg != null && (msg.contains("cancel") || msg.contains("Cancel"))) {
+                log.info("Query cancelled by user");
+                return QueryResult.ofError("Query cancelled by user", elapsed);
+            }
+            log.error("Query execution failed: {}", msg);
+            return QueryResult.ofError(msg, elapsed);
         }
+    }
+
+    /**
+     * Cancel a running query by its execution ID.
+     * @return true if a statement was found and cancel was attempted
+     */
+    public boolean cancel(String executionId) {
+        Statement stmt = activeStatements.remove(executionId);
+        if (stmt != null) {
+            try {
+                stmt.cancel();
+                log.info("Cancelled query: {}", executionId);
+                return true;
+            } catch (SQLException e) {
+                log.warn("Failed to cancel query: {}", e.getMessage());
+            }
+        }
+        return false;
     }
 
     public CompletableFuture<QueryResult> executeAsync(DataSource ds, String sql, int maxRows) {

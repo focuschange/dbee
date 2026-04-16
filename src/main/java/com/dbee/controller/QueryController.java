@@ -23,8 +23,15 @@ public class QueryController {
     @PostMapping("/execute")
     public QueryResultDto execute(@RequestBody QueryRequest request) {
         QueryResult result = queryService.execute(
-                request.connectionId(), request.sql(), request.getMaxRowsOrDefault());
+                request.connectionId(), request.sql(), request.getMaxRowsOrDefault(),
+                request.executionId());
         return QueryResultDto.from(result);
+    }
+
+    @PostMapping("/cancel/{executionId}")
+    public java.util.Map<String, Object> cancel(@org.springframework.web.bind.annotation.PathVariable String executionId) {
+        boolean cancelled = queryService.cancelQuery(executionId);
+        return java.util.Map.of("cancelled", cancelled);
     }
 
     @PostMapping("/explain")

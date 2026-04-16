@@ -33,9 +33,13 @@ public class QueryService {
     }
 
     public QueryResult execute(String connectionId, String sql, int maxRows) {
+        return execute(connectionId, sql, maxRows, null);
+    }
+
+    public QueryResult execute(String connectionId, String sql, int maxRows, String executionId) {
         ConnectionInfo info = connectionService.getConnection(connectionId);
         DataSource ds = connectionManager.getOrCreate(info);
-        QueryResult result = queryExecutor.execute(ds, sql, maxRows);
+        QueryResult result = queryExecutor.execute(ds, sql, maxRows, executionId);
 
         // Record to history
         boolean isError = result.getErrorMessage() != null;
@@ -47,6 +51,10 @@ public class QueryService {
         ));
 
         return result;
+    }
+
+    public boolean cancelQuery(String executionId) {
+        return queryExecutor.cancel(executionId);
     }
 
     public QueryResult explain(String connectionId, String sql, boolean analyze) {
