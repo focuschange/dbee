@@ -966,9 +966,17 @@ kbd {
 
 /* Load more pagination */
 .load-more-bar {
-    text-align: center;
-    padding: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 8px;
     border-top: 1px solid var(--border-subtle);
+}
+.page-info {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
 }
 
 /* Row selection & edit actions */

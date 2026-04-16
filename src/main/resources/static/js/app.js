@@ -1525,20 +1525,30 @@ function renderResultTable(rows, totalRows) {
 
     html += '</tbody></table>';
     if (rows.length > visibleRows.length) {
-        html += `<div class="load-more-bar"><button class="btn btn-ghost btn-sm" id="btn-load-more">Show more (${visibleRows.length} of ${rows.length})</button></div>`;
+        const totalPages = Math.ceil(rows.length / RENDER_PAGE_SIZE);
+        const currentPage = Math.ceil(visibleRows.length / RENDER_PAGE_SIZE);
+        html += `<div class="load-more-bar">
+            <span class="page-info">Page ${currentPage} of ${totalPages} (${visibleRows.length} / ${rows.length} rows)</span>
+            <button class="btn btn-ghost btn-sm" id="btn-load-more">Load More</button>
+            <button class="btn btn-ghost btn-sm" id="btn-load-all">Load All</button>
+        </div>`;
     }
     container.innerHTML = html;
 
-    // Load more button
+    // Load more / Load all buttons
     const loadMoreBtn = document.getElementById('btn-load-more');
     if (loadMoreBtn) {
         loadMoreBtn.onclick = () => {
             state._renderedCount = Math.min(state._renderedCount + RENDER_PAGE_SIZE, state._allFilteredRows.length);
-            // Re-render with more rows (simplified: just re-call full render)
             const moreRows = state._allFilteredRows.slice(0, state._renderedCount);
-            // Temporarily override to render more
-            const orig = state._allFilteredRows;
-            renderResultTable(moreRows.length === orig.length ? orig : moreRows, totalRows);
+            renderResultTable(moreRows.length === state._allFilteredRows.length ? state._allFilteredRows : moreRows, totalRows);
+        };
+    }
+    const loadAllBtn = document.getElementById('btn-load-all');
+    if (loadAllBtn) {
+        loadAllBtn.onclick = () => {
+            state._renderedCount = state._allFilteredRows.length;
+            renderResultTable(state._allFilteredRows, totalRows);
         };
     }
 
