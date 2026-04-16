@@ -796,6 +796,23 @@ kbd {
     opacity: 0.6;
 }
 
+/* Column resize handle */
+.result-table th { position: relative; }
+.col-resize-handle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 4px;
+    height: 100%;
+    cursor: col-resize;
+    background: transparent;
+    z-index: 1;
+}
+.col-resize-handle:hover,
+.col-resize-handle:active {
+    background: var(--accent);
+}
+
 /* Data type formatting */
 .result-table td.cell-number { text-align: right; font-variant-numeric: tabular-nums; }
 .result-table td.cell-date { color: var(--accent); }

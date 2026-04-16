@@ -1237,7 +1237,7 @@ function renderResultTable(rows, totalRows) {
         const isActive = sortCol === idx;
         const arrow = isActive ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
         const cls = isActive ? ' class="th-sorted"' : '';
-        html += `<th${cls} data-col-idx="${idx}"><span class="th-label">${escapeHtml(col)}</span><span class="th-sort-arrow">${arrow}</span></th>`;
+        html += `<th${cls} data-col-idx="${idx}"><span class="th-label">${escapeHtml(col)}</span><span class="th-sort-arrow">${arrow}</span><div class="col-resize-handle"></div></th>`;
     });
     html += '</tr></thead><tbody>';
 
@@ -1270,6 +1270,28 @@ function renderResultTable(rows, totalRows) {
         th.onclick = () => {
             const idx = parseInt(th.dataset.colIdx);
             sortResultByColumn(idx);
+        };
+    });
+
+    // Attach column resize handlers
+    container.querySelectorAll('.col-resize-handle').forEach(handle => {
+        handle.onmousedown = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const th = handle.parentElement;
+            const table = th.closest('table');
+            table.style.tableLayout = 'fixed';
+            const startX = e.clientX;
+            const startW = th.offsetWidth;
+            const onMove = (me) => {
+                th.style.width = Math.max(40, startW + me.clientX - startX) + 'px';
+            };
+            const onUp = () => {
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+            };
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
         };
     });
 
