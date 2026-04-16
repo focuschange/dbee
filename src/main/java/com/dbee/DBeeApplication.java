@@ -2,6 +2,7 @@ package com.dbee;
 
 import com.dbee.config.ConnectionConfig;
 import com.dbee.config.AppSecurityConfig;
+import com.dbee.config.AuditLogConfig;
 import com.dbee.config.LlmConfig;
 import com.dbee.config.SavedQueryConfig;
 import com.dbee.config.SnippetConfig;
@@ -50,6 +51,11 @@ public class DBeeApplication {
     @Bean
     public QueryHistoryConfig queryHistoryConfig() {
         return new QueryHistoryConfig();
+    }
+
+    @Bean
+    public AuditLogConfig auditLogConfig() {
+        return new AuditLogConfig();
     }
 
     @Bean

@@ -1,5 +1,6 @@
 package com.dbee.service;
 
+import com.dbee.config.AuditLogConfig;
 import com.dbee.db.ConnectionManager;
 import com.dbee.db.DatabaseDialect;
 import com.dbee.db.DialectFactory;
@@ -23,13 +24,16 @@ public class QueryService {
     private final QueryExecutor queryExecutor;
     private final ConnectionService connectionService;
     private final QueryHistoryService historyService;
+    private final AuditLogConfig auditLog;
 
     public QueryService(ConnectionManager connectionManager, QueryExecutor queryExecutor,
-                        ConnectionService connectionService, QueryHistoryService historyService) {
+                        ConnectionService connectionService, QueryHistoryService historyService,
+                        AuditLogConfig auditLog) {
         this.connectionManager = connectionManager;
         this.queryExecutor = queryExecutor;
         this.connectionService = connectionService;
         this.historyService = historyService;
+        this.auditLog = auditLog;
     }
 
     public QueryResult execute(String connectionId, String sql, int maxRows) {
@@ -46,6 +50,9 @@ public class QueryService {
             ds = connectionManager.reconnect(info);
             result = queryExecutor.execute(ds, sql, maxRows, executionId);
         }
+
+        // Audit log
+        auditLog.logQuery(connectionId, info.getName(), sql, !result.isError(), result.getExecutionTimeMs());
 
         // Record to history
         boolean isError = result.getErrorMessage() != null;
