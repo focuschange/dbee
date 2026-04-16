@@ -3167,6 +3167,32 @@ async function aiIndexHint() {
 }
 
 // ============================================================
+// Internationalization (i18n)
+// ============================================================
+let i18nData = {};
+
+async function setLanguage(lang) {
+    try {
+        const res = await fetch(`/i18n/${lang}.json`);
+        i18nData = await res.json();
+        localStorage.setItem('dbee-lang', lang);
+        // Update menu triggers
+        document.querySelectorAll('[data-i18n]').forEach(el => {
+            const key = el.dataset.i18n;
+            if (i18nData[key]) el.textContent = i18nData[key];
+        });
+        updateStatus(`Language: ${lang}`);
+    } catch (e) {
+        console.warn('Failed to load language:', e);
+    }
+}
+
+function restoreLanguage() {
+    const lang = localStorage.getItem('dbee-lang');
+    if (lang && lang !== 'en') setLanguage(lang);
+}
+
+// ============================================================
 // Global Zoom
 // ============================================================
 function adjustZoom(dir) {
@@ -4061,6 +4087,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     restoreZoom();
+    restoreLanguage();
     restoreToolbarState();
     initCommandPalette();
     initSavedQueries();
