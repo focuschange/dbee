@@ -41,6 +41,13 @@ public class MetadataController {
         return metadataService.getColumns(connectionId, schema, table);
     }
 
+    @GetMapping("/{connectionId}/schemas/{schema}/tables/{table}/primarykeys")
+    public List<PrimaryKeyInfo> getPrimaryKeys(@PathVariable String connectionId,
+                                                @PathVariable String schema,
+                                                @PathVariable String table) {
+        return metadataService.getPrimaryKeys(connectionId, schema, table);
+    }
+
     @GetMapping("/{connectionId}/schemas/{schema}/routines")
     public List<RoutineInfo> getRoutines(@PathVariable String connectionId, @PathVariable String schema) {
         return metadataService.getRoutines(connectionId, schema);

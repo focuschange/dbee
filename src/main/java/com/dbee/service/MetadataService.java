@@ -105,6 +105,18 @@ public class MetadataService {
         }
     }
 
+    public List<PrimaryKeyInfo> getPrimaryKeys(String connectionId, String schema, String table) {
+        ConnectionInfo info = connectionService.getConnection(connectionId);
+        DataSource ds = connectionManager.getOrCreate(info);
+        try (Connection conn = ds.getConnection()) {
+            MetadataReader reader = DialectFactory.getDialect(info.getDatabaseType())
+                    .createMetadataReader(conn);
+            return reader.getPrimaryKeys(schema, table);
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to read primary keys: " + e.getMessage(), e);
+        }
+    }
+
     public List<EventInfo> getEvents(String connectionId, String schema) {
         ConnectionInfo info = connectionService.getConnection(connectionId);
         DataSource ds = connectionManager.getOrCreate(info);

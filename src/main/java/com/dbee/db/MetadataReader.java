@@ -10,4 +10,8 @@ public interface MetadataReader {
     List<ColumnInfo> getColumns(String schema, String table);
     List<RoutineInfo> getRoutines(String schema);
     List<EventInfo> getEvents(String schema);
+
+    default List<PrimaryKeyInfo> getPrimaryKeys(String schema, String table) {
+        return List.of();
+    }
 }

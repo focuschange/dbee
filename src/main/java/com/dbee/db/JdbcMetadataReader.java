@@ -121,6 +121,26 @@ public class JdbcMetadataReader implements MetadataReader {
     }
 
     @Override
+    public List<PrimaryKeyInfo> getPrimaryKeys(String schema, String table) {
+        List<PrimaryKeyInfo> keys = new ArrayList<>();
+        try {
+            DatabaseMetaData meta = connection.getMetaData();
+            String catalog = useCatalogAsSchema ? schema : null;
+            String schemaPattern = useCatalogAsSchema ? null : schema;
+            try (ResultSet rs = meta.getPrimaryKeys(catalog, schemaPattern, table)) {
+                while (rs.next()) {
+                    keys.add(new PrimaryKeyInfo(
+                            rs.getString("COLUMN_NAME"),
+                            rs.getInt("KEY_SEQ")));
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to read primary keys", e);
+        }
+        return keys;
+    }
+
+    @Override
     public List<EventInfo> getEvents(String schema) {
         List<EventInfo> events = new ArrayList<>();
         try {

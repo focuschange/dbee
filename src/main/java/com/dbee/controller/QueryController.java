@@ -3,6 +3,7 @@ package com.dbee.controller;
 import com.dbee.controller.dto.ExplainRequest;
 import com.dbee.controller.dto.QueryRequest;
 import com.dbee.controller.dto.QueryResultDto;
+import com.dbee.controller.dto.UpdateCellRequest;
 import com.dbee.model.QueryResult;
 import com.dbee.service.QueryService;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -30,6 +31,14 @@ public class QueryController {
     public QueryResultDto explain(@RequestBody ExplainRequest request) {
         QueryResult result = queryService.explain(
                 request.connectionId(), request.sql(), request.analyze());
+        return QueryResultDto.from(result);
+    }
+
+    @PostMapping("/update-cell")
+    public QueryResultDto updateCell(@RequestBody UpdateCellRequest request) {
+        QueryResult result = queryService.updateCell(
+                request.connectionId(), request.schema(), request.table(),
+                request.primaryKeys(), request.column(), request.value());
         return QueryResultDto.from(result);
     }
 }

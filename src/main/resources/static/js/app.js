@@ -36,6 +36,8 @@ const api = {
             api.request('POST', '/api/query/execute', { connectionId, sql, maxRows }),
         explain: (connectionId, sql, analyze = false) =>
             api.request('POST', '/api/query/explain', { connectionId, sql, analyze }),
+        updateCell: (connectionId, schema, table, primaryKeys, column, value) =>
+            api.request('POST', '/api/query/update-cell', { connectionId, schema, table, primaryKeys, column, value }),
     },
     metadata: {
         schemas: (connId) => api.request('GET', `/api/metadata/${connId}/schemas`),
@@ -44,6 +46,7 @@ const api = {
         routines: (connId, schema) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/routines`),
         events: (connId, schema) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/events`),
         autocomplete: (connId) => api.request('GET', `/api/metadata/${connId}/autocomplete`),
+        primaryKeys: (connId, schema, table) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/tables/${encodeURIComponent(table)}/primarykeys`),
     },
     tunnels: {
         list: () => api.request('GET', '/api/tunnels'),
@@ -980,11 +983,15 @@ function displayResult(result, resultLabel) {
     // Store original data for sorting/filtering
     state.resultData = {
         columnNames: result.columnNames,
+        columnTypeNames: result.columnTypeNames || [],
         rows: result.rows.map(r => [...r]), // deep copy
         executionTimeMs: result.executionTimeMs,
+        tableName: result.tableName || null,
+        schemaName: result.schemaName || null,
     };
     state.sortState = { columnIndex: -1, direction: null };
     state.filterKeyword = '';
+    state.primaryKeyCache = null; // reset PK cache for new result
 
     // Show filter bar & reset input
     const filterWrap = document.getElementById('result-filter-wrap');
@@ -1051,14 +1058,16 @@ function renderResultTable(rows, totalRows) {
     });
     html += '</tr></thead><tbody>';
 
-    rows.forEach(row => {
-        html += '<tr>';
-        row.forEach(val => {
+    const editable = state.resultData.tableName && !keyword;
+    rows.forEach((row, rowIdx) => {
+        html += `<tr data-row-idx="${rowIdx}">`;
+        row.forEach((val, colIdx) => {
+            const editAttr = editable ? ` data-col-idx="${colIdx}"` : '';
             if (val === null) {
-                html += '<td class="null-value">NULL</td>';
+                html += `<td class="null-value"${editAttr}>NULL</td>`;
             } else {
                 const str = String(val);
-                html += `<td>${keyword ? highlightMatch(str, keyword) : escapeHtml(str)}</td>`;
+                html += `<td${editAttr}>${keyword ? highlightMatch(str, keyword) : escapeHtml(str)}</td>`;
             }
         });
         html += '</tr>';
@@ -1075,14 +1084,22 @@ function renderResultTable(rows, totalRows) {
         };
     });
 
+    // Attach inline editing (double-click) if editable
+    if (editable) {
+        container.querySelectorAll('.result-table tbody td[data-col-idx]').forEach(td => {
+            td.ondblclick = () => startCellEdit(td);
+        });
+    }
+
     // Update summary with filter info
     const summary = document.getElementById('result-summary');
     if (summary && totalRows !== undefined) {
         const timeMs = state.resultData.executionTimeMs;
+        const editLabel = editable ? ' | Editable' : '';
         if (keyword && rows.length !== totalRows) {
-            summary.textContent = `${rows.length} / ${totalRows} rows in ${timeMs}ms`;
+            summary.textContent = `${rows.length} / ${totalRows} rows in ${timeMs}ms${editLabel}`;
         } else {
-            summary.textContent = `${rows.length} rows in ${timeMs}ms`;
+            summary.textContent = `${rows.length} rows in ${timeMs}ms${editLabel}`;
         }
     }
 }
@@ -1112,6 +1129,125 @@ function sortResultByColumn(colIndex) {
     }
 
     applyFilterAndSort();
+}
+
+// ============================================================
+// Inline Cell Editing
+// ============================================================
+function startCellEdit(td) {
+    if (td.querySelector('input')) return; // already editing
+
+    const colIdx = parseInt(td.dataset.colIdx);
+    const row = td.parentElement;
+    const rowIdx = parseInt(row.dataset.rowIdx);
+    const isNull = td.classList.contains('null-value');
+    const originalValue = isNull ? null : td.textContent;
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'cell-edit-input';
+    input.value = isNull ? '' : originalValue;
+    input.placeholder = 'NULL';
+
+    td.textContent = '';
+    td.classList.add('cell-editing');
+    td.appendChild(input);
+    input.focus();
+    input.select();
+
+    const commitEdit = async () => {
+        const newValue = input.value;
+        const newIsNull = newValue === '' || newValue.toLowerCase() === 'null';
+        const displayVal = newIsNull ? null : newValue;
+
+        // Check if value actually changed
+        if ((!newIsNull && newValue === originalValue) || (newIsNull && isNull)) {
+            cancelEdit();
+            return;
+        }
+
+        td.classList.remove('cell-editing');
+        td.textContent = newIsNull ? 'NULL' : newValue;
+        if (newIsNull) td.classList.add('null-value');
+        else td.classList.remove('null-value');
+        td.classList.add('cell-dirty');
+
+        // Perform the update
+        try {
+            const result = await performCellUpdate(rowIdx, colIdx, displayVal);
+            if (result && result.error) {
+                td.classList.remove('cell-dirty');
+                td.classList.add('cell-error');
+                td.title = result.errorMessage;
+                updateStatus(`Update failed: ${result.errorMessage}`, true);
+                // Revert display
+                setTimeout(() => {
+                    td.textContent = isNull ? 'NULL' : originalValue;
+                    if (isNull) td.classList.add('null-value');
+                    td.classList.remove('cell-error');
+                    td.title = '';
+                }, 2000);
+            } else {
+                td.classList.add('cell-saved');
+                td.title = '';
+                // Update the stored data
+                state.resultData.rows[rowIdx][colIdx] = displayVal;
+                updateStatus('Cell updated successfully');
+                setTimeout(() => {
+                    td.classList.remove('cell-dirty', 'cell-saved');
+                }, 1500);
+            }
+        } catch (e) {
+            td.classList.add('cell-error');
+            td.title = e.message;
+            updateStatus(`Update failed: ${e.message}`, true);
+            setTimeout(() => {
+                td.textContent = isNull ? 'NULL' : originalValue;
+                if (isNull) td.classList.add('null-value');
+                td.classList.remove('cell-dirty', 'cell-error');
+                td.title = '';
+            }, 2000);
+        }
+    };
+
+    const cancelEdit = () => {
+        td.classList.remove('cell-editing');
+        td.textContent = isNull ? 'NULL' : originalValue;
+        if (isNull) td.classList.add('null-value');
+    };
+
+    input.onblur = () => commitEdit();
+    input.onkeydown = (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+        if (e.key === 'Escape') { e.preventDefault(); input.onblur = null; cancelEdit(); }
+        e.stopPropagation(); // prevent Monaco shortcuts
+    };
+}
+
+async function performCellUpdate(rowIdx, colIdx, newValue) {
+    const { tableName, schemaName, columnNames } = state.resultData;
+    if (!tableName) throw new Error('Table name not available');
+
+    // Get primary keys (cached)
+    if (!state.primaryKeyCache) {
+        const pks = await api.metadata.primaryKeys(state.activeConnectionId, schemaName, tableName);
+        if (!pks || pks.length === 0) throw new Error('No primary key found for table ' + tableName);
+        state.primaryKeyCache = pks.map(pk => pk.columnName);
+    }
+
+    const pkColumns = state.primaryKeyCache;
+    const row = state.resultData.rows[rowIdx];
+
+    // Build primary key map
+    const primaryKeys = {};
+    for (const pkCol of pkColumns) {
+        const pkIdx = columnNames.indexOf(pkCol);
+        if (pkIdx === -1) throw new Error(`Primary key column "${pkCol}" not in result set. Include all PK columns in your SELECT.`);
+        primaryKeys[pkCol] = row[pkIdx];
+    }
+
+    const column = columnNames[colIdx];
+    return await api.query.updateCell(state.activeConnectionId, schemaName, tableName, primaryKeys, column, newValue);
 }
 
 function displayError(msg) {

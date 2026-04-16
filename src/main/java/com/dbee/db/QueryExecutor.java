@@ -112,9 +112,41 @@ public class QueryExecutor {
 
         List<String> columnNames = new ArrayList<>(colCount);
         List<Class<?>> columnTypes = new ArrayList<>(colCount);
+        List<String> columnTypeNames = new ArrayList<>(colCount);
+
+        // Extract table/schema name from first column (for single-table queries)
+        String tableName = null;
+        String schemaName = null;
+        boolean singleTable = true;
+
         for (int i = 1; i <= colCount; i++) {
             columnNames.add(meta.getColumnLabel(i));
             columnTypes.add(mapSqlType(meta.getColumnType(i)));
+            columnTypeNames.add(meta.getColumnTypeName(i));
+
+            // Detect table name — all columns must come from the same table
+            try {
+                String tbl = meta.getTableName(i);
+                String sch = meta.getSchemaName(i);
+                if (sch == null || sch.isEmpty()) {
+                    sch = meta.getCatalogName(i); // MySQL uses catalog
+                }
+                if (tbl != null && !tbl.isEmpty()) {
+                    if (tableName == null) {
+                        tableName = tbl;
+                        schemaName = sch;
+                    } else if (!tableName.equals(tbl)) {
+                        singleTable = false;
+                    }
+                }
+            } catch (Exception ignored) {
+                // Some drivers may not support getTableName
+            }
+        }
+
+        if (!singleTable) {
+            tableName = null;
+            schemaName = null;
         }
 
         List<Object[]> rows = new ArrayList<>();
@@ -126,7 +158,8 @@ public class QueryExecutor {
             rows.add(row);
         }
 
-        return QueryResult.ofSelect(columnNames, columnTypes, rows, elapsed);
+        return QueryResult.ofSelect(columnNames, columnTypes, columnTypeNames, rows,
+                elapsed, tableName, schemaName);
     }
 
     private Class<?> mapSqlType(int sqlType) {

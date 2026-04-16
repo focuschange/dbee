@@ -10,9 +10,12 @@ public record QueryResultDto(
         boolean select,
         String errorMessage,
         List<String> columnNames,
+        List<String> columnTypeNames,
         List<List<Object>> rows,
         int affectedRows,
-        long executionTimeMs
+        long executionTimeMs,
+        String tableName,
+        String schemaName
 ) {
     public static QueryResultDto from(QueryResult result) {
         List<List<Object>> rows = new ArrayList<>();
@@ -29,9 +32,12 @@ public record QueryResultDto(
                 result.isSelect(),
                 result.getErrorMessage(),
                 result.getColumnNames(),
+                result.getColumnTypeNames(),
                 rows,
                 result.getAffectedRows(),
-                result.getExecutionTimeMs()
+                result.getExecutionTimeMs(),
+                result.getTableName(),
+                result.getSchemaName()
         );
     }
 

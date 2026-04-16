@@ -11,6 +11,11 @@ import com.dbee.model.QueryResult;
 import org.springframework.stereotype.Service;
 
 import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.util.Map;
+import java.util.StringJoiner;
 
 @Service
 public class QueryService {
@@ -77,5 +82,56 @@ public class QueryService {
         }
 
         return queryExecutor.execute(ds, explainSql, 10000);
+    }
+
+    public QueryResult updateCell(String connectionId, String schema, String table,
+                                   Map<String, Object> primaryKeys, String column, Object value) {
+        if (primaryKeys == null || primaryKeys.isEmpty()) {
+            return QueryResult.ofError("No primary key provided for update", 0);
+        }
+
+        ConnectionInfo info = connectionService.getConnection(connectionId);
+        DataSource ds = connectionManager.getOrCreate(info);
+
+        // Build UPDATE sql: UPDATE schema.table SET column = ? WHERE pk1 = ? AND pk2 = ?
+        String qualifiedTable = (schema != null && !schema.isEmpty())
+                ? quoteIdentifier(schema) + "." + quoteIdentifier(table)
+                : quoteIdentifier(table);
+
+        StringJoiner whereJoiner = new StringJoiner(" AND ");
+        for (String pkCol : primaryKeys.keySet()) {
+            whereJoiner.add(quoteIdentifier(pkCol) + " = ?");
+        }
+
+        String sql = "UPDATE " + qualifiedTable + " SET " + quoteIdentifier(column) + " = ? WHERE " + whereJoiner;
+
+        long start = System.currentTimeMillis();
+        try (Connection conn = ds.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            // Set the new value
+            if (value == null || "null".equalsIgnoreCase(String.valueOf(value))) {
+                ps.setObject(1, null);
+            } else {
+                ps.setObject(1, value);
+            }
+
+            // Set PK values
+            int idx = 2;
+            for (Object pkVal : primaryKeys.values()) {
+                ps.setObject(idx++, pkVal);
+            }
+
+            int affected = ps.executeUpdate();
+            long elapsed = System.currentTimeMillis() - start;
+            return QueryResult.ofUpdate(affected, elapsed);
+        } catch (SQLException e) {
+            long elapsed = System.currentTimeMillis() - start;
+            return QueryResult.ofError(e.getMessage(), elapsed);
+        }
+    }
+
+    private String quoteIdentifier(String name) {
+        return "`" + name.replace("`", "``") + "`";
     }
 }
