@@ -217,10 +217,17 @@ const SQL_KEYWORDS = [
     'SUBSTRING', 'TRIM', 'UPPER', 'LOWER', 'LENGTH', 'REPLACE', 'NOW', 'CURRENT_TIMESTAMP',
 ];
 
+const SCHEMA_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
 async function loadAutoCompleteCache(connectionId) {
+    // Return cached if still valid
+    if (state.autocompleteCache && state.autocompleteCache.connectionId === connectionId
+        && state.autocompleteCache._ts && Date.now() - state.autocompleteCache._ts < SCHEMA_CACHE_TTL) {
+        return;
+    }
     try {
         const data = await api.metadata.autocomplete(connectionId);
-        state.autocompleteCache = { connectionId, ...data };
+        state.autocompleteCache = { connectionId, ...data, _ts: Date.now() };
     } catch (e) {
         console.warn('Failed to load autocomplete metadata:', e);
         state.autocompleteCache = null;
