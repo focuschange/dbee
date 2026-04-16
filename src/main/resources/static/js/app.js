@@ -4051,6 +4051,15 @@ document.addEventListener('DOMContentLoaded', () => {
     initTunnelManager();
     initNotesManager();
     initHistoryManager();
+    // Global error handler
+    window.onerror = (msg, src, line) => {
+        console.error(`[DBee Error] ${msg} at ${src}:${line}`);
+        updateStatus('An error occurred. Check console for details.', true);
+    };
+    window.onunhandledrejection = (e) => {
+        console.error('[DBee] Unhandled promise rejection:', e.reason);
+    };
+
     restoreZoom();
     restoreToolbarState();
     initCommandPalette();
