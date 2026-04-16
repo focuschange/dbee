@@ -124,6 +124,7 @@ const api = {
         json: (connId, sql) => api.export.download('json', connId, sql),
         insert: (connId, sql, tableName) => api.export.download('insert', connId, sql, `?tableName=${encodeURIComponent(tableName || 'my_table')}`),
         xlsx: (connId, sql) => api.export.download('xlsx', connId, sql),
+        xml: (connId, sql) => api.export.download('xml', connId, sql),
     }
 };
 
@@ -2169,6 +2170,8 @@ async function exportData(format) {
             await api.export.json(connectionId, sql);
         } else if (format === 'xlsx') {
             await api.export.xlsx(connectionId, sql);
+        } else if (format === 'xml') {
+            await api.export.xml(connectionId, sql);
         } else {
             await api.export.csv(connectionId, sql);
         }
