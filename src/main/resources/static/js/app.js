@@ -1003,6 +1003,8 @@ function showTableContextMenu(e, connId, schema, tableName) {
         <div class="ctx-separator"></div>
         <div class="ctx-item" data-action="show-ddl">Show CREATE TABLE</div>
         <div class="ctx-item" data-action="show-indexes">Show Indexes</div>
+        <div class="ctx-separator"></div>
+        <div class="ctx-item" data-action="ai-explain-table">AI: Explain Table</div>
     `;
     document.body.appendChild(menu);
 
@@ -1018,9 +1020,25 @@ function showTableContextMenu(e, connId, schema, tableName) {
         menu.remove();
         await showTableIndexes(connId, schema, tableName);
     };
+    menu.querySelector('[data-action="ai-explain-table"]').onclick = async () => {
+        menu.remove();
+        await aiExplainTable(connId, schema, tableName);
+    };
 
     const close = () => { menu.remove(); document.removeEventListener('click', close); };
     setTimeout(() => document.addEventListener('click', close), 0);
+}
+
+async function aiExplainTable(connId, schema, tableName) {
+    toggleAiChatPanel();
+    appendChatMessage('user', `Explain the purpose and structure of table "${schema}.${tableName}"`);
+    const loadingMsg = appendChatMessage('loading', '');
+    try {
+        const result = await api.llm.chat(connId, `Explain the table "${schema}.${tableName}": what it likely stores, its columns, relationships, and typical use cases.`);
+        loadingMsg.remove();
+        if (result.error) appendChatMessage('error', result.message);
+        else appendChatMessage('assistant', result.message, result.sql);
+    } catch (e) { loadingMsg.remove(); appendChatMessage('error', e.message); }
 }
 
 async function showTableDdl(connId, schema, tableName) {
