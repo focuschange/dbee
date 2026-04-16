@@ -2234,20 +2234,47 @@ function initEventHandlers() {
     document.getElementById('btn-format').onclick = formatSql;
     document.getElementById('btn-new-tab').onclick = () => addEditorTab();
     document.getElementById('btn-add-tab').onclick = () => addEditorTab();
-    // Export dropdown
-    const exportBtn = document.getElementById('btn-export');
-    const exportDropdown = document.getElementById('export-dropdown');
-    exportBtn.onclick = () => {
-        exportDropdown.style.display = exportDropdown.style.display === 'none' ? 'block' : 'none';
-    };
-    document.querySelectorAll('.export-option').forEach(opt => {
-        opt.onclick = () => {
-            exportDropdown.style.display = 'none';
-            exportData(opt.dataset.format);
+    // Menu bar open/close logic
+    let activeMenu = null;
+    document.querySelectorAll('.menu-item').forEach(item => {
+        const trigger = item.querySelector('.menu-trigger');
+        trigger.onclick = (e) => {
+            e.stopPropagation();
+            if (activeMenu === item) {
+                item.classList.remove('open');
+                activeMenu = null;
+            } else {
+                if (activeMenu) activeMenu.classList.remove('open');
+                item.classList.add('open');
+                activeMenu = item;
+            }
+        };
+        // Hover to switch menus when one is open
+        trigger.onmouseenter = () => {
+            if (activeMenu && activeMenu !== item) {
+                activeMenu.classList.remove('open');
+                item.classList.add('open');
+                activeMenu = item;
+            }
         };
     });
+    // Close menu on outside click
     document.addEventListener('click', (e) => {
-        if (!e.target.closest('.export-dropdown-wrap')) exportDropdown.style.display = 'none';
+        if (activeMenu && !e.target.closest('.menu-item')) {
+            activeMenu.classList.remove('open');
+            activeMenu = null;
+        }
+    });
+    // Close menu after action click
+    document.querySelectorAll('.menu-action').forEach(action => {
+        const orig = action.onclick;
+        action.addEventListener('click', () => {
+            if (activeMenu) { activeMenu.classList.remove('open'); activeMenu = null; }
+        });
+    });
+    // Export options within menu
+    document.querySelectorAll('.export-option').forEach(opt => {
+        opt.onclick = () => exportData(opt.dataset.format);
     });
 
     // Connection dialog
