@@ -1087,10 +1087,33 @@ async function showErDiagram(connId, schema) {
         if (window.mermaid) {
             mermaid.initialize({ startOnLoad: false, theme: document.body.dataset.theme === 'light' ? 'default' : 'dark' });
             await mermaid.run({ nodes: content.querySelectorAll('.mermaid') });
+            attachErDiagramClickHandlers(connId, schema);
         }
     } catch (e) {
         content.innerHTML = `<div style="color:var(--error);padding:20px;">Failed: ${e.message}</div>`;
     }
+}
+
+function attachErDiagramClickHandlers(connId, schema) {
+    // Mermaid renders entity names as text in SVG — make them clickable
+    const content = document.getElementById('er-diagram-content');
+    const svgEl = content.querySelector('svg');
+    if (!svgEl) return;
+
+    // Find entity labels (g.entityLabel text elements)
+    svgEl.querySelectorAll('text').forEach(textEl => {
+        const name = textEl.textContent.trim();
+        if (!name || name.includes(' ') || name.includes('(')) return; // skip type labels
+        textEl.style.cursor = 'pointer';
+        textEl.onclick = () => {
+            if (monacoEditor) {
+                monacoEditor.setValue(`SELECT * FROM ${schema}.${name} LIMIT 100;`);
+                monacoEditor.focus();
+            }
+            document.getElementById('er-dialog').style.display = 'none';
+            updateStatus(`Loaded: SELECT * FROM ${name}`);
+        };
+    });
 }
 
 function exportErSvg() {
