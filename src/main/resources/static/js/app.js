@@ -2973,6 +2973,16 @@ function initCommandPalette() {
     });
 }
 
+async function executeTxn(cmd) {
+    if (!state.activeConnectionId) { updateStatus('No active connection', true); return; }
+    try {
+        const results = await api.query.execute(state.activeConnectionId, cmd, 1);
+        const r = Array.isArray(results) ? results[0] : results;
+        if (r && r.error) updateStatus(`${cmd} failed: ${r.errorMessage}`, true);
+        else updateStatus(`${cmd} executed`);
+    } catch (e) { updateStatus(`${cmd} failed: ${e.message}`, true); }
+}
+
 async function aiIndexHint() {
     const sql = getCurrentSql();
     if (!sql.trim()) { updateStatus('No SQL for index analysis', true); return; }

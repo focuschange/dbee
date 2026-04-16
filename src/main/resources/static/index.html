@@ -47,6 +47,12 @@
                 <div class="menu-dropdown">
                     <button id="btn-run" class="menu-action menu-action-primary">Run <span class="menu-shortcut">Ctrl+Enter</span></button>
                     <div class="menu-separator"></div>
+                    <div class="menu-separator"></div>
+                    <div class="menu-label">Transaction</div>
+                    <button class="menu-action" onclick="executeTxn('BEGIN')">BEGIN</button>
+                    <button class="menu-action" onclick="executeTxn('COMMIT')" style="color:var(--success)">COMMIT</button>
+                    <button class="menu-action" onclick="executeTxn('ROLLBACK')" style="color:var(--error)">ROLLBACK</button>
+                    <div class="menu-separator"></div>
                     <button id="btn-explain" class="menu-action">Explain <span class="menu-shortcut">Ctrl+E</span></button>
                     <button id="btn-explain-analyze" class="menu-action">Explain Analyze <span class="menu-shortcut">Ctrl+Shift+E</span></button>
                 </div>
