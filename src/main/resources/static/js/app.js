@@ -66,6 +66,7 @@ const api = {
         explainSql: (sql) => api.request('POST', '/api/llm/explain-sql', { connectionId: null, message: sql }),
         optimizeSql: (connectionId, sql) => api.request('POST', '/api/llm/optimize-sql', { connectionId, message: sql }),
         analyzeResult: (message) => api.request('POST', '/api/llm/analyze-result', { connectionId: null, message }),
+        indexHint: (connectionId, sql) => api.request('POST', '/api/llm/index-hint', { connectionId, message: sql }),
     },
     snippets: {
         list: () => api.request('GET', '/api/snippets'),
@@ -194,6 +195,7 @@ function initMonaco() {
         monacoEditor.addAction({ id: 'ai-explain', label: 'AI: Explain SQL', contextMenuGroupId: 'ai', run: aiExplainSql });
         monacoEditor.addAction({ id: 'ai-optimize', label: 'AI: Optimize SQL', contextMenuGroupId: 'ai', run: aiOptimizeSql });
         monacoEditor.addAction({ id: 'ai-analyze', label: 'AI: Analyze Results', contextMenuGroupId: 'ai', run: aiAnalyzeResult });
+        monacoEditor.addAction({ id: 'ai-index-hint', label: 'AI: Suggest Indexes', contextMenuGroupId: 'ai', run: aiIndexHint });
 
         // Register SQL autocomplete provider
         registerSqlCompletionProvider();
@@ -2969,6 +2971,20 @@ function initCommandPalette() {
     document.addEventListener('click', (e) => {
         if (!e.target.closest('.command-palette')) hideCommandPalette();
     });
+}
+
+async function aiIndexHint() {
+    const sql = getCurrentSql();
+    if (!sql.trim()) { updateStatus('No SQL for index analysis', true); return; }
+    toggleAiChatPanel();
+    appendChatMessage('user', `Suggest indexes for:\n${sql}`);
+    const loadingMsg = appendChatMessage('loading', '');
+    try {
+        const result = await api.llm.indexHint(state.activeConnectionId, sql);
+        loadingMsg.remove();
+        if (result.error) appendChatMessage('error', result.message);
+        else appendChatMessage('assistant', result.message, result.sql);
+    } catch (e) { loadingMsg.remove(); appendChatMessage('error', e.message); }
 }
 
 // ============================================================

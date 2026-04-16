@@ -174,6 +174,31 @@ public class LlmSettingsController {
         return null;
     }
 
+    @PostMapping("/index-hint")
+    public LlmChatResponse indexHint(@RequestBody LlmChatRequest request) {
+        try {
+            String schemaContext = "";
+            if (request.connectionId() != null && !request.connectionId().isBlank()) {
+                try {
+                    var metadata = metadataService.getAutoCompleteMetadata(request.connectionId());
+                    schemaContext = "\n\nDatabase Schema:\n" + SchemaContextBuilder.buildSchemaText(metadata);
+                } catch (Exception ignored) {}
+            }
+            String systemPrompt = """
+                    You are a database index optimization expert. Analyze the SQL query and suggest
+                    indexes that would improve its performance. For each suggestion:
+                    1. Which table and columns to index
+                    2. Whether it should be a composite index
+                    3. The CREATE INDEX statement
+                    Be concise and practical.""" + schemaContext;
+            String response = llmService.chat("Suggest indexes for:\n```sql\n" + request.message() + "\n```", systemPrompt);
+            String sql = extractSql(response);
+            return LlmChatResponse.success(response, sql);
+        } catch (Exception e) {
+            return LlmChatResponse.error(e.getMessage());
+        }
+    }
+
     @PostMapping("/explain-sql")
     public LlmChatResponse explainSql(@RequestBody LlmChatRequest request) {
         try {
