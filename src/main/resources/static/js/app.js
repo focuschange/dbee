@@ -67,6 +67,8 @@ const api = {
         optimizeSql: (connectionId, sql) => api.request('POST', '/api/llm/optimize-sql', { connectionId, message: sql }),
         analyzeResult: (message) => api.request('POST', '/api/llm/analyze-result', { connectionId: null, message }),
         indexHint: (connectionId, sql) => api.request('POST', '/api/llm/index-hint', { connectionId, message: sql }),
+        schemaReview: (connectionId, msg) => api.request('POST', '/api/llm/schema-review', { connectionId, message: msg }),
+        alterSql: (connectionId, msg) => api.request('POST', '/api/llm/alter-sql', { connectionId, message: msg }),
     },
     snippets: {
         list: () => api.request('GET', '/api/snippets'),
@@ -806,9 +808,20 @@ function createSchemaNode(connId, schema, isHidden) {
         menu.id = 'table-ctx-menu';
         menu.className = 'context-menu';
         menu.style.cssText = `display:block;left:${e.clientX}px;top:${e.clientY}px`;
-        menu.innerHTML = '<div class="ctx-item">Show ER Diagram</div>';
+        menu.innerHTML = '<div class="ctx-item" data-action="er">Show ER Diagram</div><div class="ctx-item" data-action="review">AI: Review Schema</div>';
         document.body.appendChild(menu);
-        menu.querySelector('.ctx-item').onclick = () => { menu.remove(); showErDiagram(connId, schema.name); };
+        menu.querySelector('[data-action="er"]').onclick = () => { menu.remove(); showErDiagram(connId, schema.name); };
+        menu.querySelector('[data-action="review"]').onclick = async () => {
+            menu.remove();
+            toggleAiChatPanel();
+            appendChatMessage('user', `Review the schema "${schema.name}" for design improvements`);
+            const lm = appendChatMessage('loading', '');
+            try {
+                const r = await api.llm.schemaReview(connId, `Review schema "${schema.name}"`);
+                lm.remove();
+                appendChatMessage(r.error ? 'error' : 'assistant', r.message, r.sql);
+            } catch (e) { lm.remove(); appendChatMessage('error', e.message); }
+        };
         setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 0);
     };
     node.querySelector('.tree-arrow').onclick = (e) => { e.stopPropagation(); toggle(); };
@@ -3081,6 +3094,20 @@ async function executeTxn(cmd) {
         if (r && r.error) updateStatus(`${cmd} failed: ${r.errorMessage}`, true);
         else updateStatus(`${cmd} executed`);
     } catch (e) { updateStatus(`${cmd} failed: ${e.message}`, true); }
+}
+
+async function aiAlterSchema() {
+    const desc = prompt('Describe the schema change in natural language:\n(e.g. "Add an email column to users table")');
+    if (!desc) return;
+    if (!state.activeConnectionId) { updateStatus('No active connection', true); return; }
+    toggleAiChatPanel();
+    appendChatMessage('user', `Alter schema: ${desc}`);
+    const lm = appendChatMessage('loading', '');
+    try {
+        const r = await api.llm.alterSql(state.activeConnectionId, desc);
+        lm.remove();
+        appendChatMessage(r.error ? 'error' : 'assistant', r.message, r.sql);
+    } catch (e) { lm.remove(); appendChatMessage('error', e.message); }
 }
 
 async function aiIndexHint() {

@@ -174,6 +174,53 @@ public class LlmSettingsController {
         return null;
     }
 
+    @PostMapping("/schema-review")
+    public LlmChatResponse schemaReview(@RequestBody LlmChatRequest request) {
+        try {
+            String schemaContext = "";
+            if (request.connectionId() != null && !request.connectionId().isBlank()) {
+                try {
+                    var metadata = metadataService.getAutoCompleteMetadata(request.connectionId());
+                    schemaContext = "\n\nDatabase Schema:\n" + SchemaContextBuilder.buildSchemaText(metadata);
+                } catch (Exception ignored) {}
+            }
+            String systemPrompt = """
+                    You are a database architect. Review the schema and provide:
+                    1. Normalization issues (if any)
+                    2. Missing indexes that would help common queries
+                    3. Naming convention suggestions
+                    4. Relationship improvements
+                    Be concise with actionable recommendations.""" + schemaContext;
+            String response = llmService.chat(request.message(), systemPrompt);
+            String sql = extractSql(response);
+            return LlmChatResponse.success(response, sql);
+        } catch (Exception e) {
+            return LlmChatResponse.error(e.getMessage());
+        }
+    }
+
+    @PostMapping("/alter-sql")
+    public LlmChatResponse alterSql(@RequestBody LlmChatRequest request) {
+        try {
+            String schemaContext = "";
+            if (request.connectionId() != null && !request.connectionId().isBlank()) {
+                try {
+                    var metadata = metadataService.getAutoCompleteMetadata(request.connectionId());
+                    schemaContext = "\n\nDatabase Schema:\n" + SchemaContextBuilder.buildSchemaText(metadata);
+                } catch (Exception ignored) {}
+            }
+            String systemPrompt = """
+                    You are an SQL expert. The user will describe a schema change in natural language.
+                    Generate the appropriate ALTER TABLE / CREATE INDEX / DROP statements.
+                    Return ONLY the SQL in a ```sql code block. No explanations.""" + schemaContext;
+            String response = llmService.chat(request.message(), systemPrompt);
+            String sql = extractSql(response);
+            return LlmChatResponse.success(response, sql);
+        } catch (Exception e) {
+            return LlmChatResponse.error(e.getMessage());
+        }
+    }
+
     @PostMapping("/index-hint")
     public LlmChatResponse indexHint(@RequestBody LlmChatRequest request) {
         try {
