@@ -1,6 +1,7 @@
 package com.dbee.config;
 
 import com.dbee.model.ConnectionInfo;
+import com.dbee.util.CryptoUtil;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -45,7 +46,26 @@ public class ConnectionConfig {
             return new ArrayList<>();
         }
         try {
-            return mapper.readValue(CONFIG_FILE.toFile(), new TypeReference<>() {});
+            List<ConnectionInfo> connections = mapper.readValue(CONFIG_FILE.toFile(), new TypeReference<>() {});
+            // Decrypt passwords on load
+            boolean needsRewrite = false;
+            for (ConnectionInfo conn : connections) {
+                String pwd = conn.getPassword();
+                if (pwd != null && !pwd.isEmpty()) {
+                    if (CryptoUtil.isEncrypted(pwd)) {
+                        conn.setPassword(CryptoUtil.decrypt(pwd));
+                    } else {
+                        // Plaintext password found — will be encrypted on next save
+                        needsRewrite = true;
+                    }
+                }
+            }
+            // Auto-encrypt existing plaintext passwords
+            if (needsRewrite) {
+                save(connections);
+                log.info("Auto-encrypted {} connection passwords", connections.size());
+            }
+            return connections;
         } catch (IOException e) {
             log.error("Failed to load connections", e);
             return new ArrayList<>();
@@ -55,8 +75,19 @@ public class ConnectionConfig {
     public void save(List<ConnectionInfo> connections) {
         try {
             Files.createDirectories(CONFIG_DIR);
-            mapper.writeValue(CONFIG_FILE.toFile(), connections);
-            log.info("Saved {} connections", connections.size());
+            // Encrypt passwords before saving
+            List<ConnectionInfo> toSave = new ArrayList<>();
+            for (ConnectionInfo conn : connections) {
+                ConnectionInfo copy = new ConnectionInfo(
+                        conn.getName(), conn.getDatabaseType(), conn.getHost(),
+                        conn.getPort(), conn.getDatabase(), conn.getUsername(),
+                        CryptoUtil.encrypt(conn.getPassword()));
+                copy.setId(conn.getId());
+                copy.setProperties(conn.getProperties());
+                toSave.add(copy);
+            }
+            mapper.writeValue(CONFIG_FILE.toFile(), toSave);
+            log.info("Saved {} connections (passwords encrypted)", connections.size());
         } catch (IOException e) {
             log.error("Failed to save connections", e);
         }

@@ -1,6 +1,7 @@
 package com.dbee.config;
 
 import com.dbee.model.LlmSettings;
+import com.dbee.util.CryptoUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import org.slf4j.Logger;
@@ -26,7 +27,10 @@ public class LlmConfig {
             return new LlmSettings();
         }
         try {
-            return mapper.readValue(CONFIG_FILE.toFile(), LlmSettings.class);
+            LlmSettings settings = mapper.readValue(CONFIG_FILE.toFile(), LlmSettings.class);
+            // Decrypt API key on load
+            settings.setApiKey(CryptoUtil.decrypt(settings.getApiKey()));
+            return settings;
         } catch (IOException e) {
             log.error("Failed to load LLM settings", e);
             return new LlmSettings();
@@ -36,8 +40,15 @@ public class LlmConfig {
     public void save(LlmSettings settings) {
         try {
             Files.createDirectories(CONFIG_DIR);
-            mapper.writeValue(CONFIG_FILE.toFile(), settings);
-            log.info("Saved LLM settings (provider: {})", settings.getProvider());
+            // Encrypt API key before saving
+            LlmSettings toSave = new LlmSettings();
+            toSave.setProvider(settings.getProvider());
+            toSave.setApiKey(CryptoUtil.encrypt(settings.getApiKey()));
+            toSave.setBaseUrl(settings.getBaseUrl());
+            toSave.setModel(settings.getModel());
+            toSave.setTemperature(settings.getTemperature());
+            mapper.writeValue(CONFIG_FILE.toFile(), toSave);
+            log.info("Saved LLM settings (provider: {}, key encrypted)", settings.getProvider());
         } catch (IOException e) {
             log.error("Failed to save LLM settings", e);
         }

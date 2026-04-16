@@ -1,6 +1,7 @@
 package com.dbee.config;
 
 import com.dbee.model.SshTunnelInfo;
+import com.dbee.util.CryptoUtil;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -43,7 +44,13 @@ public class SshTunnelConfig {
     public List<SshTunnelInfo> load() {
         if (!Files.exists(CONFIG_FILE)) return new ArrayList<>();
         try {
-            return mapper.readValue(CONFIG_FILE.toFile(), new TypeReference<>() {});
+            List<SshTunnelInfo> tunnels = mapper.readValue(CONFIG_FILE.toFile(), new TypeReference<>() {});
+            // Decrypt passwords on load
+            for (SshTunnelInfo t : tunnels) {
+                t.setPassword(CryptoUtil.decrypt(t.getPassword()));
+                t.setKeyPassphrase(CryptoUtil.decrypt(t.getKeyPassphrase()));
+            }
+            return tunnels;
         } catch (IOException e) {
             log.error("Failed to load SSH tunnels", e);
             return new ArrayList<>();
@@ -53,7 +60,22 @@ public class SshTunnelConfig {
     public void save(List<SshTunnelInfo> tunnels) {
         try {
             Files.createDirectories(CONFIG_DIR);
-            mapper.writeValue(CONFIG_FILE.toFile(), tunnels);
+            // Encrypt passwords before saving
+            List<SshTunnelInfo> toSave = new ArrayList<>();
+            for (SshTunnelInfo t : tunnels) {
+                SshTunnelInfo copy = new SshTunnelInfo();
+                copy.setId(t.getId());
+                copy.setName(t.getName());
+                copy.setHost(t.getHost());
+                copy.setPort(t.getPort());
+                copy.setUsername(t.getUsername());
+                copy.setAuthType(t.getAuthType());
+                copy.setPassword(CryptoUtil.encrypt(t.getPassword()));
+                copy.setKeyPath(t.getKeyPath());
+                copy.setKeyPassphrase(CryptoUtil.encrypt(t.getKeyPassphrase()));
+                toSave.add(copy);
+            }
+            mapper.writeValue(CONFIG_FILE.toFile(), toSave);
         } catch (IOException e) {
             log.error("Failed to save SSH tunnels", e);
         }
