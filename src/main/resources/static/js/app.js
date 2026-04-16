@@ -1080,7 +1080,10 @@ async function showErDiagram(connId, schema) {
 
     try {
         const result = await api.metadata.erDiagram(connId, schema);
-        content.innerHTML = `<div class="mermaid">${result.mermaid}</div>`;
+        content.innerHTML = `<div style="margin-bottom:10px;text-align:right;">
+            <button class="btn btn-ghost btn-sm" onclick="exportErSvg()">Export SVG</button>
+            <button class="btn btn-ghost btn-sm" onclick="exportErPng()">Export PNG</button>
+        </div><div class="mermaid">${result.mermaid}</div>`;
         if (window.mermaid) {
             mermaid.initialize({ startOnLoad: false, theme: document.body.dataset.theme === 'light' ? 'default' : 'dark' });
             await mermaid.run({ nodes: content.querySelectorAll('.mermaid') });
@@ -1088,6 +1091,43 @@ async function showErDiagram(connId, schema) {
     } catch (e) {
         content.innerHTML = `<div style="color:var(--error);padding:20px;">Failed: ${e.message}</div>`;
     }
+}
+
+function exportErSvg() {
+    const svg = document.querySelector('#er-diagram-content svg');
+    if (!svg) { updateStatus('No diagram to export', true); return; }
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const blob = new Blob([svgData], { type: 'image/svg+xml' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'er-diagram.svg';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    updateStatus('ER diagram exported as SVG');
+}
+
+function exportErPng() {
+    const svg = document.querySelector('#er-diagram-content svg');
+    if (!svg) { updateStatus('No diagram to export', true); return; }
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+    img.onload = () => {
+        canvas.width = img.width * 2;
+        canvas.height = img.height * 2;
+        ctx.scale(2, 2);
+        ctx.drawImage(img, 0, 0);
+        canvas.toBlob(blob => {
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'er-diagram.png';
+            a.click();
+            URL.revokeObjectURL(a.href);
+            updateStatus('ER diagram exported as PNG');
+        });
+    };
+    img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
 }
 
 function showTableContextMenu(e, connId, schema, tableName) {
