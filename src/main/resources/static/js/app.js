@@ -1416,6 +1416,13 @@ function startCellEdit(td) {
             return;
         }
 
+        // #25: Preview the SQL before executing
+        const previewSql = buildUpdatePreviewSql(rowIdx, colIdx, displayVal);
+        if (previewSql && !confirm(`Execute this SQL?\n\n${previewSql}`)) {
+            cancelEdit();
+            return;
+        }
+
         td.classList.remove('cell-editing');
         td.textContent = newIsNull ? 'NULL' : newValue;
         if (newIsNull) td.classList.add('null-value');
@@ -1472,6 +1479,21 @@ function startCellEdit(td) {
         if (e.key === 'Escape') { e.preventDefault(); input.onblur = null; cancelEdit(); }
         e.stopPropagation(); // prevent Monaco shortcuts
     };
+}
+
+function buildUpdatePreviewSql(rowIdx, colIdx, newValue) {
+    const { tableName, schemaName, columnNames } = state.resultData;
+    if (!tableName || !state.primaryKeyCache) return null;
+    const row = state.resultData.rows[rowIdx];
+    const col = columnNames[colIdx];
+    const valStr = newValue === null ? 'NULL' : `'${newValue}'`;
+    const wheres = state.primaryKeyCache.map(pk => {
+        const pkIdx = columnNames.indexOf(pk);
+        const pkVal = row[pkIdx];
+        return `${pk} = ${pkVal === null ? 'NULL' : `'${pkVal}'`}`;
+    }).join(' AND ');
+    const table = schemaName ? `${schemaName}.${tableName}` : tableName;
+    return `UPDATE ${table} SET ${col} = ${valStr} WHERE ${wheres}`;
 }
 
 async function performCellUpdate(rowIdx, colIdx, newValue) {
