@@ -128,10 +128,17 @@
         </div>
         <div class="toolbar-divider"></div>
         <div class="toolbar-group">
-            <button id="btn-export" class="btn btn-ghost" title="Export CSV (Alt+X)">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                Export
-            </button>
+            <div class="export-dropdown-wrap">
+                <button id="btn-export" class="btn btn-ghost" title="Export CSV (Alt+X)">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Export
+                </button>
+                <div class="export-dropdown" id="export-dropdown" style="display:none;">
+                    <button class="export-option" data-format="csv">CSV</button>
+                    <button class="export-option" data-format="json">JSON</button>
+                    <button class="export-option" data-format="insert">SQL INSERT</button>
+                </div>
+            </div>
         </div>
         <div class="toolbar-divider"></div>
         <div class="toolbar-group">

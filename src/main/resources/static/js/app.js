@@ -88,21 +88,25 @@ const api = {
         clear: () => api.request('DELETE', '/api/history'),
     },
     export: {
-        csv: async (connectionId, sql) => {
-            const res = await fetch('/api/export/csv', {
+        download: async (format, connectionId, sql, extra = '') => {
+            const url = `/api/export/${format}${extra}`;
+            const res = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ connectionId, sql, maxRows: 50000 })
             });
             if (!res.ok) throw new Error('Export failed');
             const blob = await res.blob();
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'export.csv';
-            a.click();
-            URL.revokeObjectURL(url);
-        }
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            const ext = format === 'insert' ? 'sql' : format;
+            link.download = `export.${ext}`;
+            link.click();
+            URL.revokeObjectURL(link.href);
+        },
+        csv: (connId, sql) => api.export.download('csv', connId, sql),
+        json: (connId, sql) => api.export.download('json', connId, sql),
+        insert: (connId, sql, tableName) => api.export.download('insert', connId, sql, `?tableName=${encodeURIComponent(tableName || 'my_table')}`),
     }
 };
 
@@ -1727,18 +1731,30 @@ async function handleContextAction(action) {
 // ============================================================
 // Export
 // ============================================================
-async function exportCsv() {
+async function exportData(format) {
     if (!state.activeConnectionId || !state.lastResult) {
         updateStatus('No query result to export', true);
         return;
     }
     try {
-        await api.export.csv(state.lastResult.connectionId, state.lastResult.sql);
-        updateStatus('Exported successfully');
+        const { connectionId, sql } = state.lastResult;
+        if (format === 'insert') {
+            const tableName = state.resultData?.tableName || prompt('Table name for INSERT statements:', 'my_table');
+            if (!tableName) return;
+            await api.export.insert(connectionId, sql, tableName);
+        } else if (format === 'json') {
+            await api.export.json(connectionId, sql);
+        } else {
+            await api.export.csv(connectionId, sql);
+        }
+        updateStatus(`Exported as ${format.toUpperCase()}`);
     } catch (e) {
         updateStatus('Export failed: ' + e.message, true);
     }
 }
+
+// backward compat alias
+async function exportCsv() { return exportData('csv'); }
 
 // ============================================================
 // Resizers
@@ -1874,7 +1890,21 @@ function initEventHandlers() {
     document.getElementById('btn-format').onclick = formatSql;
     document.getElementById('btn-new-tab').onclick = () => addEditorTab();
     document.getElementById('btn-add-tab').onclick = () => addEditorTab();
-    document.getElementById('btn-export').onclick = exportCsv;
+    // Export dropdown
+    const exportBtn = document.getElementById('btn-export');
+    const exportDropdown = document.getElementById('export-dropdown');
+    exportBtn.onclick = () => {
+        exportDropdown.style.display = exportDropdown.style.display === 'none' ? 'block' : 'none';
+    };
+    document.querySelectorAll('.export-option').forEach(opt => {
+        opt.onclick = () => {
+            exportDropdown.style.display = 'none';
+            exportData(opt.dataset.format);
+        };
+    });
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.export-dropdown-wrap')) exportDropdown.style.display = 'none';
+    });
 
     // Connection dialog
     document.getElementById('conn-dialog-close').onclick = hideConnectionDialog;
