@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  dbee:
+    build: .
+    ports:
+      - "8765:8765"
+    volumes:
+      - dbee-data:/root/.dbee
+    restart: unless-stopped
+
+volumes:
+  dbee-data:
