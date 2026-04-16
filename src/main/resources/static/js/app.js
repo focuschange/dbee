@@ -203,11 +203,16 @@ function initMonaco() {
         // Register SQL autocomplete provider
         registerSqlCompletionProvider();
 
-        // Create first tab
-        addEditorTab();
+        // Restore session or create first tab
+        if (!restoreEditorSession()) {
+            addEditorTab();
+        }
 
         // Restore editor settings
         restoreEditorSettings();
+
+        // Auto-save session periodically
+        setInterval(saveEditorSession, 5000);
     });
 }
 
@@ -508,6 +513,37 @@ function addEditorTab() {
     state.editors.push(tab);
     renderTabs();
     switchTab(id);
+}
+
+function saveEditorSession() {
+    try {
+        const session = state.editors.map(t => ({
+            id: t.id, name: t.name, content: t.model.getValue(),
+        }));
+        localStorage.setItem('dbee-editor-session', JSON.stringify({
+            tabs: session, activeId: state.activeEditorId, counter: editorCounter
+        }));
+    } catch (e) {}
+}
+
+function restoreEditorSession() {
+    try {
+        const data = JSON.parse(localStorage.getItem('dbee-editor-session'));
+        if (!data || !data.tabs || data.tabs.length === 0) return false;
+        editorCounter = data.counter || data.tabs.length;
+        data.tabs.forEach(t => {
+            const model = monaco.editor.createModel(t.content || '', 'sql');
+            const tab = { id: t.id, name: t.name, model, savedContent: t.content || '' };
+            model.onDidChangeContent(() => {
+                tab.dirty = model.getValue() !== tab.savedContent;
+                renderTabs();
+            });
+            state.editors.push(tab);
+        });
+        renderTabs();
+        switchTab(data.activeId || data.tabs[0].id);
+        return true;
+    } catch (e) { return false; }
 }
 
 function switchTab(id) {
