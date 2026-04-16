@@ -27,6 +27,9 @@ dependencies {
     // Connection pooling
     implementation("com.zaxxer:HikariCP:5.1.0")
 
+    // Excel export
+    implementation("org.apache.poi:poi-ooxml:5.2.5")
+
     // JDBC drivers
     implementation("com.mysql:mysql-connector-j:8.3.0")
     implementation("org.postgresql:postgresql:42.7.3")
