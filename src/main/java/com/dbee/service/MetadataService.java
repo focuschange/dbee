@@ -15,7 +15,9 @@ import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class MetadataService {
@@ -185,6 +187,85 @@ public class MetadataService {
             return reader.getForeignKeys(schema, table);
         } catch (SQLException e) {
             return List.of();
+        }
+    }
+
+    /**
+     * Returns ERD as a structured graph (nodes = tables, edges = FKs).
+     * Used by Cytoscape.js on the frontend.
+     */
+    public Map<String, Object> generateErGraph(String connectionId, String schema) {
+        ConnectionInfo info = connectionService.getConnection(connectionId);
+        DataSource ds = connectionManager.getOrCreate(info);
+        try (Connection conn = ds.getConnection()) {
+            MetadataReader reader = DialectFactory.getDialect(info.getDatabaseType())
+                    .createMetadataReader(conn);
+            List<TableInfo> tables = reader.getTables(schema);
+
+            List<Map<String, Object>> nodes = new ArrayList<>();
+            List<Map<String, Object>> edges = new ArrayList<>();
+            int edgeId = 0;
+
+            for (TableInfo table : tables) {
+                if (!"TABLE".equalsIgnoreCase(table.type())) continue;
+
+                List<ColumnInfo> cols = reader.getColumns(schema, table.name());
+                List<PrimaryKeyInfo> pks = reader.getPrimaryKeys(schema, table.name());
+                var pkNames = pks.stream().map(PrimaryKeyInfo::columnName).toList();
+                var fks = reader.getForeignKeys(schema, table.name());
+
+                // Collect FK column names for this table
+                java.util.Set<String> fkColumns = new java.util.HashSet<>();
+                for (var fk : fks) {
+                    Object fkCol = fk.get("fkColumn");
+                    if (fkCol != null) fkColumns.add(fkCol.toString());
+                }
+
+                List<Map<String, Object>> columnList = new ArrayList<>();
+                for (ColumnInfo col : cols) {
+                    Map<String, Object> c = new HashMap<>();
+                    c.put("name", col.name());
+                    c.put("type", col.typeName());
+                    c.put("size", col.size());
+                    c.put("nullable", col.nullable());
+                    c.put("pk", pkNames.contains(col.name()));
+                    c.put("fk", fkColumns.contains(col.name()));
+                    columnList.add(c);
+                }
+
+                Map<String, Object> node = new HashMap<>();
+                node.put("id", table.name());
+                node.put("label", table.name());
+                node.put("schema", schema);
+                node.put("columns", columnList);
+                node.put("comment", "");
+                nodes.add(node);
+
+                for (var fk : fks) {
+                    Map<String, Object> edge = new HashMap<>();
+                    edge.put("id", "e" + (edgeId++));
+                    edge.put("source", table.name());          // child (has FK)
+                    edge.put("target", fk.get("pkTable"));     // parent (referenced)
+                    edge.put("label", fk.get("fkColumn"));
+                    edge.put("fkColumn", fk.get("fkColumn"));
+                    edge.put("pkColumn", fk.get("pkColumn"));
+                    edge.put("cardinality", "N:1");
+                    edges.add(edge);
+                }
+            }
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("schema", schema);
+            result.put("nodes", nodes);
+            result.put("edges", edges);
+            return result;
+        } catch (SQLException e) {
+            Map<String, Object> err = new HashMap<>();
+            err.put("schema", schema);
+            err.put("nodes", List.of());
+            err.put("edges", List.of());
+            err.put("error", "Failed to read ERD metadata");
+            return err;
         }
     }
 

@@ -3,6 +3,7 @@ package com.dbee.controller;
 import com.dbee.controller.dto.AutoCompleteMetadataDto;
 import com.dbee.model.*;
 import com.dbee.service.MetadataService;
+import com.dbee.service.ErdExportService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -14,9 +15,11 @@ import java.util.List;
 @RequestMapping("/api/metadata")
 public class MetadataController {
     private final MetadataService metadataService;
+    private final ErdExportService erdExportService;
 
-    public MetadataController(MetadataService metadataService) {
+    public MetadataController(MetadataService metadataService, ErdExportService erdExportService) {
         this.metadataService = metadataService;
+        this.erdExportService = erdExportService;
     }
 
     @GetMapping("/{connectionId}/autocomplete")
@@ -105,6 +108,24 @@ public class MetadataController {
                                                        @PathVariable String schema) {
         String mermaid = metadataService.generateErDiagram(connectionId, schema);
         return java.util.Map.of("mermaid", mermaid);
+    }
+
+    @GetMapping("/{connectionId}/schemas/{schema}/er-graph")
+    public java.util.Map<String, Object> getErGraph(@PathVariable String connectionId,
+                                                     @PathVariable String schema) {
+        return metadataService.generateErGraph(connectionId, schema);
+    }
+
+    @GetMapping("/{connectionId}/schemas/{schema}/er-export/{format}")
+    public java.util.Map<String, Object> exportEr(@PathVariable String connectionId,
+                                                    @PathVariable String schema,
+                                                    @PathVariable String format) {
+        java.util.Map<String, Object> graph = metadataService.generateErGraph(connectionId, schema);
+        String content = erdExportService.export(graph, schema, format.toLowerCase());
+        return java.util.Map.of(
+                "format", format,
+                "content", content
+        );
     }
 
     @GetMapping("/{connectionId}/schemas/{schema}/routines")

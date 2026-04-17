@@ -55,6 +55,8 @@ const api = {
         ddl: (connId, schema, table) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/tables/${encodeURIComponent(table)}/ddl`),
         indexes: (connId, schema, table) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/tables/${encodeURIComponent(table)}/indexes`),
         erDiagram: (connId, schema) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/er-diagram`),
+        erGraph: (connId, schema) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/er-graph`),
+        erExport: (connId, schema, format) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/er-export/${format}`),
         documentation: (connId, schema) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/documentation`),
     },
     llm: {
@@ -71,6 +73,16 @@ const api = {
         ollamaModels: (baseUrl) => api.request('GET', `/api/llm/ollama-models?baseUrl=${encodeURIComponent(baseUrl)}`),
         schemaReview: (connectionId, msg) => api.request('POST', '/api/llm/schema-review', { connectionId, message: msg }),
         alterSql: (connectionId, msg) => api.request('POST', '/api/llm/alter-sql', { connectionId, message: msg }),
+    },
+    erdLayout: {
+        get: async (connId, schema) => {
+            const res = await fetch(`/api/erd/layout/${connId}/${encodeURIComponent(schema)}`);
+            if (res.status === 204) return null;
+            if (!res.ok) throw new Error('Failed to load layout');
+            return res.json();
+        },
+        save: (connId, schema, layout) => api.request('PUT', `/api/erd/layout/${connId}/${encodeURIComponent(schema)}`, layout),
+        delete: (connId, schema) => api.request('DELETE', `/api/erd/layout/${connId}/${encodeURIComponent(schema)}`),
     },
     snippets: {
         list: () => api.request('GET', '/api/snippets'),
@@ -505,7 +517,7 @@ function addEditorTab() {
     editorCounter++;
     const id = 'tab-' + editorCounter;
     const model = monaco.editor.createModel('', 'sql');
-    const tab = { id, name: 'Query ' + editorCounter, model, savedContent: '' };
+    const tab = { id, type: 'sql', name: 'Query ' + editorCounter, model, savedContent: '' };
     // Track dirty state
     model.onDidChangeContent(() => {
         tab.dirty = model.getValue() !== tab.savedContent;
@@ -516,11 +528,40 @@ function addEditorTab() {
     switchTab(id);
 }
 
+/**
+ * Open (or focus) an ERD tab for a given connection + schema.
+ * Returns the tab id.
+ */
+function addOrFocusErdTab(connId, connName, schema) {
+    // If an ERD tab for this conn+schema exists, just switch to it
+    const existing = state.editors.find(t => t.type === 'erd' && t.connId === connId && t.schema === schema);
+    if (existing) { switchTab(existing.id); return existing.id; }
+
+    editorCounter++;
+    const id = 'tab-' + editorCounter;
+    const tab = {
+        id, type: 'erd',
+        name: `ERD: ${connName || 'conn'}.${schema}`,
+        connId, connName, schema,
+        cy: null,       // Cytoscape instance (lazy init)
+        options: {},    // view options
+    };
+    state.editors.push(tab);
+    renderTabs();
+    switchTab(id);
+    return id;
+}
+
 function saveEditorSession() {
     try {
-        const session = state.editors.map(t => ({
-            id: t.id, name: t.name, content: t.model.getValue(),
-        }));
+        const session = state.editors.map(t => {
+            if (t.type === 'erd') {
+                return { id: t.id, type: 'erd', name: t.name,
+                         connId: t.connId, connName: t.connName, schema: t.schema };
+            }
+            return { id: t.id, type: 'sql', name: t.name,
+                     content: t.model ? t.model.getValue() : '' };
+        });
         localStorage.setItem('dbee-editor-session', JSON.stringify({
             tabs: session, activeId: state.activeEditorId, counter: editorCounter
         }));
@@ -533,13 +574,21 @@ function restoreEditorSession() {
         if (!data || !data.tabs || data.tabs.length === 0) return false;
         editorCounter = data.counter || data.tabs.length;
         data.tabs.forEach(t => {
-            const model = monaco.editor.createModel(t.content || '', 'sql');
-            const tab = { id: t.id, name: t.name, model, savedContent: t.content || '' };
-            model.onDidChangeContent(() => {
-                tab.dirty = model.getValue() !== tab.savedContent;
-                renderTabs();
-            });
-            state.editors.push(tab);
+            const type = t.type || 'sql';
+            if (type === 'erd') {
+                const tab = { id: t.id, type: 'erd', name: t.name,
+                              connId: t.connId, connName: t.connName, schema: t.schema,
+                              cy: null, options: {} };
+                state.editors.push(tab);
+            } else {
+                const model = monaco.editor.createModel(t.content || '', 'sql');
+                const tab = { id: t.id, type: 'sql', name: t.name, model, savedContent: t.content || '' };
+                model.onDidChangeContent(() => {
+                    tab.dirty = model.getValue() !== tab.savedContent;
+                    renderTabs();
+                });
+                state.editors.push(tab);
+            }
         });
         renderTabs();
         switchTab(data.activeId || data.tabs[0].id);
@@ -548,10 +597,29 @@ function restoreEditorSession() {
 }
 
 function switchTab(id) {
+    const prevTabId = state.activeEditorId;
+    const prevTab = state.editors.find(e => e.id === prevTabId);
     state.activeEditorId = id;
     const tab = state.editors.find(e => e.id === id);
-    if (tab && monacoEditor) {
-        monacoEditor.setModel(tab.model);
+    if (!tab) { renderTabs(); return; }
+
+    const editorContainer = document.getElementById('editor-container');
+    const erdView = document.getElementById('erd-view');
+
+    // If leaving an ERD tab, destroy the React Flow root (container is shared)
+    if (prevTab && prevTab.type === 'erd' && prevTab !== tab && window.erdReact) {
+        try { window.erdReact.destroy(); } catch (e) {}
+    }
+
+    if (tab.type === 'erd') {
+        if (editorContainer) editorContainer.style.display = 'none';
+        if (erdView) erdView.style.display = 'flex';
+        // Always (re)mount on switch — React Flow lives in the shared container
+        initErdTab(tab);
+    } else {
+        if (editorContainer) editorContainer.style.display = '';
+        if (erdView) erdView.style.display = 'none';
+        if (monacoEditor && tab.model) monacoEditor.setModel(tab.model);
     }
     renderTabs();
 }
@@ -560,7 +628,15 @@ function closeTab(id) {
     const idx = state.editors.findIndex(e => e.id === id);
     if (idx === -1 || state.editors.length <= 1) return;
 
-    state.editors[idx].model.dispose();
+    const tab = state.editors[idx];
+    // For ERD tabs: if currently mounted, destroy React Flow root
+    if (tab.type === 'erd') {
+        if (tab.id === state.activeEditorId && window.erdReact) {
+            try { window.erdReact.destroy(); } catch (e) {}
+        }
+    } else if (tab.model && tab.model.dispose) {
+        tab.model.dispose();
+    }
     state.editors.splice(idx, 1);
 
     if (state.activeEditorId === id) {
@@ -575,7 +651,8 @@ function renderTabs() {
     tabList.innerHTML = '';
     state.editors.forEach(tab => {
         const div = document.createElement('div');
-        div.className = 'tab' + (tab.id === state.activeEditorId ? ' active' : '') + (tab.dirty ? ' dirty' : '');
+        const typeClass = tab.type === 'erd' ? ' tab-erd' : '';
+        div.className = 'tab' + (tab.id === state.activeEditorId ? ' active' : '') + (tab.dirty ? ' dirty' : '') + typeClass;
         const dirtyDot = tab.dirty ? '<span class="tab-dirty-dot">●</span>' : '';
         div.innerHTML = `
             <span class="tab-label">${escapeHtml(tab.name)}${dirtyDot}</span>
@@ -607,6 +684,9 @@ function renderTabs() {
 
 function getCurrentSql() {
     if (!monacoEditor) return '';
+    // If the active tab is not an SQL tab, no SQL context available
+    const activeTab = state.editors.find(t => t.id === state.activeEditorId);
+    if (activeTab && activeTab.type !== 'sql') return '';
     const selection = monacoEditor.getModel().getValueInRange(monacoEditor.getSelection());
     return selection.trim() ? selection : monacoEditor.getValue();
 }
@@ -850,7 +930,12 @@ function createSchemaNode(connId, schema, isHidden) {
         menu.style.cssText = `display:block;left:${e.clientX}px;top:${e.clientY}px`;
         menu.innerHTML = '<div class="ctx-item" data-action="er">Show ER Diagram</div><div class="ctx-item" data-action="review">AI: Review Schema</div>';
         document.body.appendChild(menu);
-        menu.querySelector('[data-action="er"]').onclick = () => { menu.remove(); showErDiagram(connId, schema.name); };
+        menu.querySelector('[data-action="er"]').onclick = () => {
+            menu.remove();
+            const conn = state.connections.find(c => c.id === connId);
+            const connName = conn ? conn.name : '';
+            addOrFocusErdTab(connId, connName, schema.name);
+        };
         menu.querySelector('[data-action="review"]').onclick = async () => {
             menu.remove();
             toggleAiChatPanel();
@@ -2465,9 +2550,459 @@ async function loadConnections() {
             api.tunnels.list()
         ]);
         renderTree();
+        // Check for connections that need password re-entry
+        checkPasswordReentry();
     } catch (e) {
         console.error('Failed to load connections:', e);
     }
+}
+
+async function checkPasswordReentry() {
+    try {
+        const result = await api.request('GET', '/api/connections/password-reentry-required');
+        if (result.required && result.connectionIds.length > 0) {
+            const names = result.connectionIds.map(id => {
+                const conn = state.connections.find(c => c.id === id);
+                return conn ? conn.name : id;
+            });
+            showPasswordReentryNotification(names, result.connectionIds);
+        }
+    } catch (e) {
+        console.error('Failed to check password re-entry status:', e);
+    }
+}
+
+function showPasswordReentryNotification(names, ids) {
+    // Remove existing notification if any
+    const existing = document.getElementById('password-reentry-banner');
+    if (existing) existing.remove();
+
+    const banner = document.createElement('div');
+    banner.id = 'password-reentry-banner';
+    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:10000;background:#e74c3c;color:#fff;padding:10px 20px;display:flex;align-items:center;gap:12px;font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
+    banner.innerHTML = `
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 9v4m0 4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/>
+        </svg>
+        <span style="flex:1">
+            <strong>Password re-entry required:</strong>
+            The encryption key has changed. Please re-enter passwords for:
+            <strong>${escapeHtml(names.join(', '))}</strong>
+        </span>
+        <button onclick="passwordReentryEditFirst('${escapeHtml(ids[0])}')" style="background:#fff;color:#e74c3c;border:none;padding:5px 14px;border-radius:4px;cursor:pointer;font-weight:600;font-size:12px;">
+            Edit Connection
+        </button>
+        <button onclick="this.parentElement.remove()" style="background:transparent;color:#fff;border:1px solid rgba(255,255,255,0.5);padding:5px 10px;border-radius:4px;cursor:pointer;font-size:12px;">
+            Dismiss
+        </button>
+    `;
+    document.body.prepend(banner);
+}
+
+function passwordReentryEditFirst(connId) {
+    const conn = state.connections.find(c => c.id === connId);
+    if (conn) {
+        showConnectionDialog(conn);
+        // Remove the banner
+        const banner = document.getElementById('password-reentry-banner');
+        if (banner) banner.remove();
+    }
+}
+
+// ============================================================
+// ERD Tab (React Flow via /js/erd-react.js bridge)
+// ============================================================
+// All heavy-lifting is in erd-react.js (loaded as ES module). This file
+// just wires the vanilla toolbar/tab UI to the React Flow instance via
+// the `window.erdReact` bridge object.
+
+async function initErdTab(tab) {
+    const canvas = document.getElementById('erd-canvas');
+    showErdStatus('Loading schema metadata...');
+    let graph;
+    try {
+        graph = await api.metadata.erGraph(tab.connId, tab.schema);
+    } catch (e) {
+        canvas.innerHTML = `<div style="padding:20px;color:var(--error)">Failed to load ERD: ${escapeHtml(e.message)}</div>`;
+        hideErdStatus();
+        return;
+    }
+
+    // Restore options
+    const savedOpts = JSON.parse(localStorage.getItem('dbee-erd-options') || '{}');
+    tab.options = Object.assign({
+        layout: 'force',
+        edgeStyle: 'bezier',
+        hideColumns: false,
+        hideTypes: false,
+        pkFkOnly: false,
+        focusMode: false,
+        minimap: false,
+    }, savedOpts);
+    tab.graph = graph;
+
+    // Load saved positions
+    let savedLayout = null;
+    try { savedLayout = await api.erdLayout.get(tab.connId, tab.schema); } catch (e) {}
+
+    // Wait for erdReact module to finish loading
+    if (!window.erdReact) {
+        await new Promise(r => {
+            const iv = setInterval(() => { if (window.erdReact) { clearInterval(iv); r(); } }, 50);
+        });
+    }
+
+    // Clear canvas and mount React Flow
+    canvas.innerHTML = '';
+    await window.erdReact.mount(canvas, {
+        graph,
+        savedLayout,
+        options: tab.options,
+        onPositionsChange: (layout) => {
+            // Persist to server
+            api.erdLayout.save(tab.connId, tab.schema, {
+                version: 1,
+                zoom: layout.zoom,
+                pan: layout.viewport ? { x: layout.viewport.x, y: layout.viewport.y } : { x: 0, y: 0 },
+                positions: layout.positions,
+            }).then(() => showErdStatus('Layout saved', 1500))
+              .catch(() => {});
+        },
+        onTableDoubleClick: (tableName) => {
+            const sql = `SELECT * FROM ${tab.schema ? tab.schema + '.' : ''}${tableName} LIMIT 100;`;
+            addEditorTab();
+            const newTab = state.editors[state.editors.length - 1];
+            if (newTab && newTab.model) newTab.model.setValue(sql);
+        },
+    });
+
+    // Sync toolbar state with stored options
+    const layoutSel = document.getElementById('erd-layout-select');
+    if (layoutSel) layoutSel.value = tab.options.layout || 'force';
+    const edgeSel = document.getElementById('erd-edge-style');
+    if (edgeSel) edgeSel.value = tab.options.edgeStyle || 'bezier';
+    ['hide-cols','hide-types','pkfk','focus','minimap'].forEach(k => {
+        const map = {'hide-cols':'hideColumns','hide-types':'hideTypes','pkfk':'pkFkOnly','focus':'focusMode','minimap':'minimap'};
+        const el = document.getElementById('erd-opt-' + k);
+        if (el) el.checked = !!tab.options[map[k]];
+    });
+    updateErdZoomLabel(tab);
+    wireErdToolbar();
+
+    hideErdStatus();
+}
+
+function saveErdOptions(tab) {
+    try { localStorage.setItem('dbee-erd-options', JSON.stringify(tab.options)); } catch (e) {}
+}
+
+function getActiveErdTab() {
+    const tab = state.editors.find(t => t.id === state.activeEditorId);
+    return tab && tab.type === 'erd' ? tab : null;
+}
+
+function showErdStatus(msg, autoHideMs = 0) {
+    const el = document.getElementById('erd-status');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.add('visible');
+    if (autoHideMs > 0) setTimeout(() => el.classList.remove('visible'), autoHideMs);
+}
+function hideErdStatus() {
+    const el = document.getElementById('erd-status');
+    if (el) el.classList.remove('visible');
+}
+
+async function updateErdZoomLabel(tab) {
+    const el = document.getElementById('erd-zoom-label');
+    if (!el) return;
+    try {
+        const z = await window.erdReact.getZoom();
+        el.textContent = Math.round(z * 100) + '%';
+    } catch (e) {}
+}
+
+// Toolbar wiring — runs once, reads the active ERD tab at invocation time.
+let _erdToolbarWired = false;
+function wireErdToolbar() {
+    if (_erdToolbarWired) return;
+    _erdToolbarWired = true;
+
+    document.getElementById('erd-layout-select').addEventListener('change', async (e) => {
+        const tab = getActiveErdTab();
+        if (!tab) return;
+        tab.options.layout = e.target.value;
+        saveErdOptions(tab);
+        await window.erdReact.runLayout(e.target.value);
+    });
+
+    document.getElementById('erd-btn-arrange').addEventListener('click', async () => {
+        const tab = getActiveErdTab();
+        if (!tab) return;
+        await window.erdReact.runLayout(tab.options.layout || 'dagre-lr');
+    });
+
+    const edgeStyleSel = document.getElementById('erd-edge-style');
+    if (edgeStyleSel) {
+        edgeStyleSel.addEventListener('change', async (e) => {
+            const tab = getActiveErdTab();
+            if (!tab) return;
+            tab.options.edgeStyle = e.target.value;
+            saveErdOptions(tab);
+            await window.erdReact.setOptions({ edgeStyle: e.target.value });
+        });
+    }
+
+    const bindOpt = (id, key) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('change', async (e) => {
+            const tab = getActiveErdTab();
+            if (!tab) return;
+            tab.options[key] = e.target.checked;
+            saveErdOptions(tab);
+            await window.erdReact.setOptions({ [key]: e.target.checked });
+        });
+    };
+    bindOpt('erd-opt-hide-cols', 'hideColumns');
+    bindOpt('erd-opt-hide-types', 'hideTypes');
+    bindOpt('erd-opt-pkfk', 'pkFkOnly');
+    bindOpt('erd-opt-focus', 'focusMode');
+    bindOpt('erd-opt-minimap', 'minimap');
+
+    // Search
+    const searchInput = document.getElementById('erd-search');
+    let searchDeb = null;
+    searchInput.addEventListener('input', (e) => {
+        clearTimeout(searchDeb);
+        searchDeb = setTimeout(async () => {
+            await window.erdReact.searchHighlight(e.target.value);
+        }, 200);
+    });
+
+    // Save / Reset / Export / Import
+    document.getElementById('erd-btn-save').addEventListener('click', async () => {
+        const tab = getActiveErdTab();
+        if (!tab) return;
+        const layout = await window.erdReact.getPositions();
+        if (!layout) return;
+        await api.erdLayout.save(tab.connId, tab.schema, {
+            version: 1, zoom: layout.zoom,
+            pan: layout.viewport ? { x: layout.viewport.x, y: layout.viewport.y } : { x: 0, y: 0 },
+            positions: layout.positions,
+        });
+        showErdStatus('Layout saved', 1500);
+    });
+
+    document.getElementById('erd-btn-reset').addEventListener('click', async () => {
+        const tab = getActiveErdTab();
+        if (!tab) return;
+        if (!confirm('Reset layout? Saved positions will be deleted and auto-layout re-run.')) return;
+        try {
+            await api.erdLayout.delete(tab.connId, tab.schema);
+            await window.erdReact.runLayout(tab.options.layout || 'dagre-lr');
+            showErdStatus('Layout reset', 1500);
+        } catch (e) { showErdStatus('Reset failed: ' + e.message, 2500); }
+    });
+
+    // Export menu
+    const exportBtn = document.getElementById('erd-btn-export');
+    const exportMenu = document.getElementById('erd-export-menu');
+    exportBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        exportMenu.style.display = exportMenu.style.display === 'none' ? 'block' : 'none';
+    });
+    document.addEventListener('click', () => { exportMenu.style.display = 'none'; });
+    exportMenu.querySelectorAll('div[data-fmt]').forEach(item => {
+        item.addEventListener('click', async () => {
+            exportMenu.style.display = 'none';
+            const fmt = item.dataset.fmt;
+            const tab = getActiveErdTab();
+            if (tab) await erdExport(tab, fmt);
+        });
+    });
+
+    // Import
+    document.getElementById('erd-btn-import').addEventListener('click', () => {
+        document.getElementById('erd-import-file').click();
+    });
+    document.getElementById('erd-import-file').addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        if (file.size > 1024 * 1024) { alert('File too large (>1MB)'); return; }
+        const text = await file.text();
+        try {
+            const data = JSON.parse(text);
+            await erdImport(getActiveErdTab(), data);
+        } catch (err) { alert('Import failed: ' + err.message); }
+        e.target.value = '';
+    });
+
+    // Zoom controls
+    document.getElementById('erd-zoom-in').addEventListener('click', async () => {
+        await window.erdReact.zoomIn();
+        const tab = getActiveErdTab();
+        if (tab) updateErdZoomLabel(tab);
+    });
+    document.getElementById('erd-zoom-out').addEventListener('click', async () => {
+        await window.erdReact.zoomOut();
+        const tab = getActiveErdTab();
+        if (tab) updateErdZoomLabel(tab);
+    });
+    document.getElementById('erd-zoom-fit').addEventListener('click', async () => {
+        await window.erdReact.fitView();
+        const tab = getActiveErdTab();
+        if (tab) updateErdZoomLabel(tab);
+    });
+    document.getElementById('erd-zoom-reset').addEventListener('click', async () => {
+        await window.erdReact.resetZoom();
+        const tab = getActiveErdTab();
+        if (tab) updateErdZoomLabel(tab);
+    });
+
+    // Update zoom label on any zoom change (poll every 500ms while active)
+    setInterval(async () => {
+        const tab = getActiveErdTab();
+        if (tab) updateErdZoomLabel(tab);
+    }, 500);
+}
+
+// --------- Export / Import ----------
+async function erdExport(tab, format) {
+    const safeName = `${(tab.connName || 'conn').replace(/[^a-z0-9]+/gi,'_')}_${tab.schema}`;
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    try {
+        if (format === 'png' || format === 'svg') {
+            // Capture the ERD viewport using dom-to-image via the bridge (HTMLToImage alternative)
+            const view = document.querySelector('.rf-erd-wrapper .react-flow__viewport');
+            const container = document.querySelector('.rf-erd-wrapper .react-flow');
+            if (!view || !container) {
+                showErdStatus('Nothing to export', 2000);
+                return;
+            }
+            // Simple approach: serialize SVG via XMLSerializer for edges + inline node HTML
+            if (format === 'svg') {
+                // Basic SVG export: combine the React Flow SVG (edges) + HTML-foreignObject for nodes
+                const rfSvg = container.querySelector('svg');
+                if (rfSvg) {
+                    const cloned = rfSvg.cloneNode(true);
+                    cloned.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+                    const blob = new Blob([new XMLSerializer().serializeToString(cloned)],
+                        { type: 'image/svg+xml' });
+                    downloadBlob(blob, `${safeName}_${ts}.svg`);
+                    showErdStatus('Exported SVG (edges only; use PNG for full export)', 2500);
+                }
+            } else {
+                // PNG via canvas screenshot of the wrapper
+                await erdPngExport(container, `${safeName}_${ts}.png`);
+            }
+        } else if (format === 'json') {
+            const layout = await window.erdReact.getPositions();
+            const positions = layout ? layout.positions : {};
+            const graph = await window.erdReact.getGraph();
+            const payload = {
+                version: '1.0',
+                meta: { connectionName: tab.connName, schema: tab.schema, exportedAt: new Date().toISOString() },
+                options: tab.options,
+                nodes: (graph ? graph.nodes : []).map(n => ({
+                    id: n.id, label: n.label, columns: n.columns, comment: n.comment || '',
+                    position: positions[n.id] || null,
+                })),
+                edges: graph ? graph.edges : [],
+            };
+            downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }),
+                `${safeName}_${ts}.json`);
+        } else {
+            // Server-side text formats
+            const result = await api.metadata.erExport(tab.connId, tab.schema, format);
+            const extMap = { mermaid: 'mmd', dbml: 'dbml', ddl: 'sql', plantuml: 'puml' };
+            const ext = extMap[format] || 'txt';
+            downloadBlob(new Blob([result.content], { type: 'text/plain' }),
+                `${safeName}_${ts}.${ext}`);
+        }
+        showErdStatus(`Exported as ${format.toUpperCase()}`, 2000);
+    } catch (e) {
+        console.error(e);
+        showErdStatus(`Export failed: ${e.message}`, 3000);
+    }
+}
+
+async function erdPngExport(container, filename) {
+    // Minimal PNG export: use html2canvas pattern via SVG foreignObject → canvas
+    const rect = container.getBoundingClientRect();
+    const width = Math.ceil(rect.width);
+    const height = Math.ceil(rect.height);
+    // Serialize the container HTML into an SVG foreignObject
+    const cloned = container.cloneNode(true);
+    // Inline computed styles is complex; use a simpler approach: let browser do it
+    const svgData = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+            <foreignObject width="100%" height="100%">
+                <div xmlns="http://www.w3.org/1999/xhtml">${new XMLSerializer().serializeToString(cloned)}</div>
+            </foreignObject>
+        </svg>`;
+    const img = new Image();
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgData);
+    await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+    });
+    const canvas = document.createElement('canvas');
+    canvas.width = width * 2;
+    canvas.height = height * 2;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = document.body.dataset.theme === 'light' ? '#ffffff' : '#1e1e1e';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.scale(2, 2);
+    ctx.drawImage(img, 0, 0);
+    canvas.toBlob(blob => downloadBlob(blob, filename), 'image/png');
+}
+
+async function erdImport(tab, data) {
+    if (!tab) return;
+    if (!data || !data.nodes) { alert('Invalid ERD JSON'); return; }
+    const positions = {};
+    data.nodes.forEach(n => { if (n.position && n.id) positions[n.id] = n.position; });
+    if (data.options && typeof data.options === 'object') {
+        tab.options = Object.assign(tab.options, data.options);
+        saveErdOptions(tab);
+        await window.erdReact.setOptions(data.options);
+    }
+    await window.erdReact.applyPositions(positions);
+    await window.erdReact.fitView();
+    showErdStatus(`Imported ${Object.keys(positions).length} positions`, 3000);
+}
+
+function downloadBlob(blob, filename) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// Menubar / toolbar handlers — callable without an ERD tab being focused
+// (shows an alert if none is active).
+async function menuErdExport(format) {
+    const tab = getActiveErdTab();
+    if (!tab) {
+        alert('Open an ERD tab first (right-click a schema → Show ER Diagram).');
+        return;
+    }
+    await erdExport(tab, format);
+}
+
+function menuErdImport() {
+    const tab = getActiveErdTab();
+    if (!tab) {
+        alert('Open an ERD tab first (right-click a schema → Show ER Diagram).');
+        return;
+    }
+    // Reuse the hidden file input already wired to erdImport
+    const input = document.getElementById('erd-import-file');
+    if (input) input.click();
 }
 
 // ============================================================
@@ -4300,4 +4835,21 @@ document.addEventListener('DOMContentLoaded', () => {
     initMonaco();
     loadConnections();
     loadSnippetsCache();
+
+    // Flush pending ERD layout save before unload
+    window.addEventListener('beforeunload', async () => {
+        const activeTab = state.editors.find(t => t.id === state.activeEditorId);
+        if (activeTab && activeTab.type === 'erd' && window.erdReact) {
+            try {
+                const layout = await window.erdReact.getPositions();
+                if (layout) {
+                    await api.erdLayout.save(activeTab.connId, activeTab.schema, {
+                        version: 1, zoom: layout.zoom,
+                        pan: layout.viewport ? { x: layout.viewport.x, y: layout.viewport.y } : { x: 0, y: 0 },
+                        positions: layout.positions,
+                    });
+                }
+            } catch (e) {}
+        }
+    });
 });

@@ -45,10 +45,15 @@ public class SshTunnelConfig {
         if (!Files.exists(CONFIG_FILE)) return new ArrayList<>();
         try {
             List<SshTunnelInfo> tunnels = mapper.readValue(CONFIG_FILE.toFile(), new TypeReference<>() {});
-            // Decrypt passwords on load
+            // Decrypt passwords on load (handle key change gracefully)
             for (SshTunnelInfo t : tunnels) {
-                t.setPassword(CryptoUtil.decrypt(t.getPassword()));
-                t.setKeyPassphrase(CryptoUtil.decrypt(t.getKeyPassphrase()));
+                String decPwd = CryptoUtil.decrypt(t.getPassword());
+                t.setPassword(CryptoUtil.isDecryptionFailed(decPwd) ? "" : decPwd);
+                String decPass = CryptoUtil.decrypt(t.getKeyPassphrase());
+                t.setKeyPassphrase(CryptoUtil.isDecryptionFailed(decPass) ? "" : decPass);
+                if (CryptoUtil.isDecryptionFailed(decPwd) || CryptoUtil.isDecryptionFailed(decPass)) {
+                    log.warn("SSH tunnel '{}' password decryption failed — re-entry required", t.getName());
+                }
             }
             return tunnels;
         } catch (IOException e) {

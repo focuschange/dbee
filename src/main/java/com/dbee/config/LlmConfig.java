@@ -28,8 +28,14 @@ public class LlmConfig {
         }
         try {
             LlmSettings settings = mapper.readValue(CONFIG_FILE.toFile(), LlmSettings.class);
-            // Decrypt API key on load
-            settings.setApiKey(CryptoUtil.decrypt(settings.getApiKey()));
+            // Decrypt API key on load (handle key change gracefully)
+            String decKey = CryptoUtil.decrypt(settings.getApiKey());
+            if (CryptoUtil.isDecryptionFailed(decKey)) {
+                settings.setApiKey("");
+                log.warn("LLM API key decryption failed — re-entry required");
+            } else {
+                settings.setApiKey(decKey);
+            }
             return settings;
         } catch (IOException e) {
             log.error("Failed to load LLM settings", e);

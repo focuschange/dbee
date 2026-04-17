@@ -12,7 +12,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 public class ConnectionConfig {
     private static final Logger log = LoggerFactory.getLogger(ConnectionConfig.class);
@@ -21,6 +23,9 @@ public class ConnectionConfig {
     private static final Path CONFIG_FILE = CONFIG_DIR.resolve("connections.json");
     private static final String FILE_NAME = "connections.json";
     private final ObjectMapper mapper;
+
+    /** Connection IDs whose passwords could not be decrypted (key changed) */
+    private final Set<String> passwordReentryRequired = new HashSet<>();
 
     public ConnectionConfig() {
         this.mapper = new ObjectMapper();
@@ -53,7 +58,15 @@ public class ConnectionConfig {
                 String pwd = conn.getPassword();
                 if (pwd != null && !pwd.isEmpty()) {
                     if (CryptoUtil.isEncrypted(pwd)) {
-                        conn.setPassword(CryptoUtil.decrypt(pwd));
+                        String decrypted = CryptoUtil.decrypt(pwd);
+                        if (CryptoUtil.isDecryptionFailed(decrypted)) {
+                            // Decryption failed (key changed) — clear password, mark for re-entry
+                            conn.setPassword("");
+                            passwordReentryRequired.add(conn.getId());
+                            log.warn("Password decryption failed for connection '{}' — re-entry required", conn.getName());
+                        } else {
+                            conn.setPassword(decrypted);
+                        }
                     } else {
                         // Plaintext password found — will be encrypted on next save
                         needsRewrite = true;
@@ -70,6 +83,16 @@ public class ConnectionConfig {
             log.error("Failed to load connections", e);
             return new ArrayList<>();
         }
+    }
+
+    /** Returns IDs of connections whose password could not be decrypted */
+    public Set<String> getPasswordReentryRequired() {
+        return Set.copyOf(passwordReentryRequired);
+    }
+
+    /** Mark a connection's password as successfully re-entered */
+    public void clearPasswordReentry(String connectionId) {
+        passwordReentryRequired.remove(connectionId);
     }
 
     public void save(List<ConnectionInfo> connections) {

@@ -2813,3 +2813,390 @@ kbd {
     -webkit-box-orient: vertical;
 }
 
+
+/* =========================================================
+   ERD View (Cytoscape-based)
+   ========================================================= */
+.erd-view {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--bg-editor, #1e1e1e);
+}
+
+.erd-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    flex-wrap: wrap;
+    font-size: 12px;
+}
+
+.erd-toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.erd-toolbar-right {
+    margin-left: auto;
+}
+
+.erd-toolbar label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.erd-toolbar select,
+.erd-search {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 4px 6px;
+    font-size: 12px;
+}
+
+.erd-search {
+    width: 150px;
+}
+
+.erd-dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.erd-dropdown-menu {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+    z-index: 100;
+    min-width: 200px;
+    margin-top: 4px;
+}
+
+.erd-dropdown-menu div {
+    padding: 8px 12px;
+    cursor: pointer;
+    color: var(--text-primary);
+    font-size: 13px;
+}
+
+.erd-dropdown-menu div:hover {
+    background: var(--hover);
+}
+
+.erd-canvas-wrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.erd-canvas {
+    width: 100%;
+    height: 100%;
+}
+
+.erd-minimap {
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
+    width: 180px;
+    height: 120px;
+    border: 1px solid var(--border-color);
+    background: rgba(0,0,0,0.4);
+    border-radius: 4px;
+    overflow: hidden;
+    pointer-events: auto;
+}
+
+.erd-status {
+    position: absolute;
+    left: 12px;
+    bottom: 12px;
+    padding: 4px 10px;
+    background: rgba(0,0,0,0.6);
+    color: #fff;
+    font-size: 11px;
+    border-radius: 4px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+
+.erd-status.visible {
+    opacity: 1;
+}
+
+.tab.tab-erd .tab-label::before {
+    content: "📊 ";
+    margin-right: 2px;
+}
+
+/* =========================================================
+   ERD Table-style nodes (cytoscape-node-html-label overlay)
+   ========================================================= */
+.erd-entity {
+    background: #ffffff;
+    border: 2px solid #4a90e2;
+    border-radius: 6px;
+    font-family: 'JetBrains Mono', 'Menlo', monospace;
+    font-size: 12px;
+    color: #1a1a1a;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+    min-width: 220px;
+    overflow: hidden;
+    user-select: none;
+    pointer-events: none; /* let cytoscape handle clicks */
+}
+
+body[data-theme="dark"] .erd-entity,
+body[data-theme="normal"] .erd-entity {
+    background: #2a2d35;
+    border-color: #5294e2;
+    color: #f5f5f5;
+}
+
+.erd-entity-header {
+    background: #4a90e2;
+    color: #ffffff;
+    padding: 6px 12px;
+    font-weight: 700;
+    font-size: 13px;
+    text-align: center;
+    letter-spacing: 0.3px;
+}
+
+body[data-theme="dark"] .erd-entity-header,
+body[data-theme="normal"] .erd-entity-header {
+    background: #3b6ea5;
+}
+
+.erd-entity-body {
+    display: table;
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.erd-entity-row {
+    display: table-row;
+}
+
+.erd-entity-row + .erd-entity-row .erd-entity-cell {
+    border-top: 1px solid rgba(127,127,127,0.3);
+}
+
+.erd-entity-cell {
+    display: table-cell;
+    padding: 5px 8px;
+    vertical-align: middle;
+    white-space: nowrap;
+    color: inherit;
+}
+
+.erd-cell-icon {
+    width: 18px;
+    text-align: center;
+    color: #999;
+    font-size: 12px;
+}
+.erd-cell-icon.pk { color: #f1c40f; }
+.erd-cell-icon.fk { color: #3498db; }
+
+.erd-cell-name {
+    font-weight: 600;
+    color: inherit;
+    font-size: 12.5px;
+}
+
+.erd-cell-type {
+    color: #6b7280;
+    font-size: 11px;
+    padding-left: 12px;
+    text-align: right;
+    font-weight: 500;
+}
+
+body[data-theme="dark"] .erd-cell-type,
+body[data-theme="normal"] .erd-cell-type {
+    color: #a8b2c0;
+}
+
+/* Highlight / fade states flow through opacity on overlay */
+.erd-entity.faded { opacity: 0.25; }
+.erd-entity.highlighted {
+    box-shadow: 0 0 0 3px #f39c12, 0 2px 10px rgba(0,0,0,0.25);
+}
+
+/* Plugin overlay container must not intercept drag/click — safety rule */
+.nodeHtmlLabelsHolder,
+.nodeHtmlLabelsHolder > div,
+div[class*="nodeHtmlLabels"] {
+    pointer-events: none !important;
+}
+
+/* =========================================================
+   ERD Zoom controls (vertical bottom-left)
+   ========================================================= */
+.erd-zoom-controls {
+    position: absolute;
+    left: 12px;
+    bottom: 12px;
+    display: flex;
+    flex-direction: column;
+    background: #ffffff;
+    border: 1px solid rgba(0,0,0,0.15);
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    z-index: 10;
+}
+
+body[data-theme="dark"] .erd-zoom-controls,
+body[data-theme="normal"] .erd-zoom-controls {
+    background: #323642;
+    border-color: rgba(255,255,255,0.15);
+}
+
+.erd-zoom-controls button {
+    width: 40px;
+    height: 36px;
+    border: none;
+    background: transparent;
+    color: #1a1a1a;
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-bottom: 1px solid rgba(127,127,127,0.25);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* 1:1 button has text content — shrink its font to fit */
+.erd-zoom-controls button#erd-zoom-reset {
+    font-size: 13px;
+    letter-spacing: -0.5px;
+}
+
+body[data-theme="dark"] .erd-zoom-controls button,
+body[data-theme="normal"] .erd-zoom-controls button {
+    color: #ffffff;
+}
+
+.erd-zoom-controls button:last-of-type {
+    border-bottom: none;
+}
+
+.erd-zoom-controls button:hover {
+    background: rgba(74,144,226,0.15);
+    color: #4a90e2;
+}
+
+body[data-theme="dark"] .erd-zoom-controls button:hover,
+body[data-theme="normal"] .erd-zoom-controls button:hover {
+    background: rgba(82,148,226,0.2);
+    color: #7eb6f5;
+}
+
+.erd-zoom-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-align: center;
+    padding: 4px 0;
+    color: #4a5568;
+    background: rgba(127,127,127,0.12);
+    border-top: 1px solid rgba(127,127,127,0.25);
+}
+
+body[data-theme="dark"] .erd-zoom-label,
+body[data-theme="normal"] .erd-zoom-label {
+    color: #cbd5e0;
+}
+
+/* =========================================================
+   React Flow overrides for ERD viewer
+   ========================================================= */
+.rf-erd-wrapper {
+    position: relative;
+    width: 100%;
+    height: 100%;
+}
+
+/* Remove default React Flow node padding/border so our .erd-entity styles show */
+.rf-erd-wrapper .react-flow__node {
+    padding: 0;
+    border-radius: 6px;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    cursor: grab;
+}
+.rf-erd-wrapper .react-flow__node.selected,
+.rf-erd-wrapper .react-flow__node:focus,
+.rf-erd-wrapper .react-flow__node:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px #2ecc71;
+    border-radius: 6px;
+}
+.rf-erd-wrapper .react-flow__node-table.dragging { cursor: grabbing; }
+
+/* Highlight state */
+.rf-erd-entity.highlighted {
+    box-shadow: 0 0 0 3px #f39c12, 0 2px 10px rgba(0,0,0,0.25) !important;
+}
+.rf-erd-entity.faded {
+    opacity: 0.25;
+    transition: opacity 0.2s;
+}
+.rf-erd-entity.selected {
+    box-shadow: 0 0 0 3px #2ecc71, 0 2px 10px rgba(0,0,0,0.25) !important;
+}
+
+/* Edge label styling */
+.rf-edge-label {
+    position: absolute;
+    padding: 2px 6px;
+    background: rgba(30,30,30,0.85);
+    color: #cbd5e0;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    border-radius: 3px;
+    pointer-events: none;
+    white-space: nowrap;
+}
+body[data-theme="light"] .rf-edge-label {
+    background: rgba(255,255,255,0.95);
+    color: #2d3748;
+    border: 1px solid #cbd5e0;
+}
+
+/* React Flow controls — hide default since we use custom zoom-controls */
+.rf-erd-wrapper .react-flow__controls { display: none; }
+
+/* MiniMap position (user can toggle) */
+.rf-erd-wrapper .react-flow__minimap {
+    right: 12px;
+    bottom: 12px;
+    border-radius: 6px;
+    border: 1px solid rgba(127,127,127,0.3);
+}
+
+/* Ensure node takes width from its HTML content (not React Flow default) */
+.rf-erd-wrapper .react-flow__node-table { width: auto; }

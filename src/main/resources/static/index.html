@@ -9,6 +9,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://uicdn.toast.com/editor/3.2.2/toastui-editor.min.css">
     <link rel="stylesheet" href="https://uicdn.toast.com/editor/3.2.2/theme/toastui-editor-dark.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xyflow/react@12.4.4/dist/style.css">
     <link rel="stylesheet" href="/css/app.css">
 </head>
 <body>
@@ -63,11 +64,23 @@
             <div class="menu-item">
                 <button class="menu-trigger">Export</button>
                 <div class="menu-dropdown" id="export-dropdown">
+                    <div class="menu-label">Query Results</div>
                     <button class="menu-action export-option" data-format="csv">CSV <span class="menu-shortcut">Alt+X</span></button>
                     <button class="menu-action export-option" data-format="json">JSON</button>
                     <button class="menu-action export-option" data-format="xlsx">Excel (XLSX)</button>
                     <button class="menu-action export-option" data-format="xml">XML</button>
                     <button class="menu-action export-option" data-format="insert">SQL INSERT</button>
+                    <div class="menu-separator"></div>
+                    <div class="menu-label">ERD</div>
+                    <button class="menu-action" onclick="menuErdExport('json')">ERD JSON (with positions)</button>
+                    <button class="menu-action" onclick="menuErdExport('png')">ERD PNG</button>
+                    <button class="menu-action" onclick="menuErdExport('svg')">ERD SVG</button>
+                    <button class="menu-action" onclick="menuErdExport('mermaid')">ERD Mermaid</button>
+                    <button class="menu-action" onclick="menuErdExport('dbml')">ERD DBML</button>
+                    <button class="menu-action" onclick="menuErdExport('ddl')">ERD SQL DDL</button>
+                    <button class="menu-action" onclick="menuErdExport('plantuml')">ERD PlantUML</button>
+                    <div class="menu-separator"></div>
+                    <button class="menu-action" onclick="menuErdImport()">Import ERD JSON…</button>
                 </div>
             </div>
             <div class="menu-item">
@@ -153,6 +166,12 @@
         <button class="tb-btn" onclick="exportData('csv')" title="Export CSV (Alt+X)">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         </button>
+        <button class="tb-btn" onclick="menuErdExport('json')" title="Export ERD (JSON)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><line x1="10" y1="6.5" x2="14" y2="6.5"/><line x1="6.5" y1="10" x2="6.5" y2="14"/></svg>
+        </button>
+        <button class="tb-btn" onclick="menuErdImport()" title="Import ERD JSON">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </button>
         <div class="tb-sep"></div>
         <button class="tb-btn" onclick="addEditorTab()" title="New Tab (Alt+N)">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -190,6 +209,70 @@
                 </button>
             </div>
             <div id="editor-container"></div>
+            <div id="erd-view" class="erd-view" style="display:none;">
+                <div class="erd-toolbar">
+                    <div class="erd-toolbar-group">
+                        <label>Layout:</label>
+                        <select id="erd-layout-select">
+                            <option value="force" selected>Force (shortest edges)</option>
+                            <option value="dagre-lr">Hierarchy (LR)</option>
+                            <option value="dagre-tb">Hierarchy (TB)</option>
+                            <option value="dagre-rl">Hierarchy (RL)</option>
+                            <option value="dagre-bt">Hierarchy (BT)</option>
+                            <option value="grid">Grid</option>
+                            <option value="circle">Circle</option>
+                        </select>
+                        <button id="erd-btn-arrange" class="btn btn-ghost btn-sm" title="Re-run layout">Auto-arrange</button>
+                        <label>Edges:</label>
+                        <select id="erd-edge-style">
+                            <option value="bezier" selected>Bezier (curved)</option>
+                            <option value="straight">Straight lines</option>
+                            <option value="step">Orthogonal (step)</option>
+                            <option value="crowsfoot">Crow's foot (ER)</option>
+                        </select>
+                    </div>
+                    <div class="erd-toolbar-group">
+                        <label><input type="checkbox" id="erd-opt-hide-cols"> Hide columns</label>
+                        <label><input type="checkbox" id="erd-opt-hide-types"> Hide types</label>
+                        <label><input type="checkbox" id="erd-opt-pkfk"> PK/FK only</label>
+                    </div>
+                    <div class="erd-toolbar-group">
+                        <label><input type="checkbox" id="erd-opt-focus"> Focus mode</label>
+                        <label><input type="checkbox" id="erd-opt-minimap"> Minimap</label>
+                        <input type="text" id="erd-search" class="erd-search" placeholder="Search tables...">
+                    </div>
+                    <div class="erd-toolbar-group erd-toolbar-right">
+                        <button id="erd-btn-save" class="btn btn-ghost btn-sm" title="Save layout">💾 Save</button>
+                        <button id="erd-btn-reset" class="btn btn-ghost btn-sm" title="Reset layout (delete saved positions)">🔄 Reset</button>
+                        <div class="erd-dropdown">
+                            <button id="erd-btn-export" class="btn btn-ghost btn-sm">Export ▾</button>
+                            <div id="erd-export-menu" class="erd-dropdown-menu" style="display:none;">
+                                <div data-fmt="json">DBee JSON (with positions)</div>
+                                <div data-fmt="png">PNG Image</div>
+                                <div data-fmt="svg">SVG Image</div>
+                                <div data-fmt="mermaid">Mermaid</div>
+                                <div data-fmt="dbml">DBML (dbdiagram.io)</div>
+                                <div data-fmt="ddl">SQL DDL</div>
+                                <div data-fmt="plantuml">PlantUML</div>
+                            </div>
+                        </div>
+                        <button id="erd-btn-import" class="btn btn-ghost btn-sm" title="Import JSON layout">Import</button>
+                        <input type="file" id="erd-import-file" accept=".json" style="display:none;">
+                    </div>
+                </div>
+                <div id="erd-canvas-wrap" class="erd-canvas-wrap">
+                    <div id="erd-canvas" class="erd-canvas"></div>
+                    <div id="erd-zoom-controls" class="erd-zoom-controls">
+                        <button id="erd-zoom-in" title="Zoom in">+</button>
+                        <button id="erd-zoom-out" title="Zoom out">−</button>
+                        <button id="erd-zoom-fit" title="Fit to screen"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg></button>
+                        <button id="erd-zoom-reset" title="Reset zoom (100%)">1:1</button>
+                        <div id="erd-zoom-label" class="erd-zoom-label">100%</div>
+                    </div>
+                    <div id="erd-minimap" class="erd-minimap" style="display:none;"></div>
+                    <div id="erd-status" class="erd-status"></div>
+                </div>
+            </div>
 
             <!-- Horizontal Resizer -->
             <div id="h-resizer"><div class="resizer-handle-h"></div></div>
@@ -795,8 +878,24 @@
     <script src="https://uicdn.toast.com/editor/3.2.2/toastui-editor-all.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+    <!-- Cytoscape removed — ERD is now React Flow based (see erd-react.js) -->
     <script src="https://cdn.jsdelivr.net/npm/sql-formatter@15.4.2/dist/sql-formatter.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/loader.js"></script>
+    <!-- React Flow (ES modules via esm.sh) for ERD viewer -->
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.3.1",
+        "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
+        "react-dom": "https://esm.sh/react-dom@18.3.1",
+        "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+        "@xyflow/react": "https://esm.sh/@xyflow/react@12.4.4?deps=react@18.3.1,react-dom@18.3.1",
+        "dagre": "https://esm.sh/dagre@0.8.5",
+      "d3-force": "https://esm.sh/d3-force@3.0.0"
+      }
+    }
+    </script>
+    <script type="module" src="/js/erd-react.js"></script>
     <script src="/js/app.js"></script>
 </body>
 </html>

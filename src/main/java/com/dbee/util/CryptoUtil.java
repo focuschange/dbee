@@ -89,6 +89,8 @@ public class CryptoUtil {
     /**
      * Decrypt an ENC(base64) string back to plaintext.
      * If the input is not encrypted (no ENC prefix), returns as-is for backward compatibility.
+     * If decryption fails (e.g., key changed), returns the original ENC(...) value unchanged
+     * to preserve the data and allow detection via {@link #isDecryptionFailed(String)}.
      */
     public static String decrypt(String encrypted) {
         if (encrypted == null || encrypted.isEmpty()) return encrypted;
@@ -110,9 +112,9 @@ public class CryptoUtil {
             byte[] plaintext = cipher.doFinal(ciphertext);
             return new String(plaintext, StandardCharsets.UTF_8);
         } catch (Exception e) {
-            // If decryption fails (e.g., key changed), return empty string
-            // The password will need to be re-entered
-            return "";
+            // If decryption fails (e.g., key changed), return original ENC value
+            // to preserve the data — detected by isDecryptionFailed()
+            return encrypted;
         }
     }
 
@@ -121,5 +123,13 @@ public class CryptoUtil {
      */
     public static boolean isEncrypted(String value) {
         return value != null && value.startsWith(PREFIX) && value.endsWith(SUFFIX);
+    }
+
+    /**
+     * Check if the value still contains an undecryptable ENC(...) token.
+     * This happens when the master key changed and the password needs re-entry.
+     */
+    public static boolean isDecryptionFailed(String value) {
+        return isEncrypted(value);
     }
 }

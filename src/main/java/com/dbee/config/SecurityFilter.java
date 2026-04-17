@@ -20,7 +20,8 @@ public class SecurityFilter extends OncePerRequestFilter {
     private static final Set<String> PUBLIC_PATHS = Set.of(
             "/api/security/status",
             "/api/security/verify",
-            "/api/version"
+            "/api/version",
+            "/api/connections/password-reentry-required"
     );
 
     public SecurityFilter(AppSecurityConfig securityConfig) {

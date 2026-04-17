@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/api/connections")
@@ -36,6 +37,15 @@ public class ConnectionController {
     public ResponseEntity<Void> delete(@PathVariable String id) {
         connectionService.deleteConnection(id);
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Returns connection IDs that need password re-entry (encryption key changed).
+     */
+    @GetMapping("/password-reentry-required")
+    public Map<String, Object> passwordReentryRequired() {
+        Set<String> ids = connectionService.getPasswordReentryRequired();
+        return Map.of("connectionIds", ids, "required", !ids.isEmpty());
     }
 
     @PostMapping("/test")

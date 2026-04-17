@@ -14,18 +14,25 @@ public class ConnectionService {
     private final ConnectionManager connectionManager;
     private final ConnectionConfig connectionConfig;
     private final SshTunnelService sshTunnelService;
+    private final ErdLayoutService erdLayoutService;
     private final List<ConnectionInfo> connections;
 
     public ConnectionService(ConnectionManager connectionManager, ConnectionConfig connectionConfig,
-                             SshTunnelService sshTunnelService) {
+                             SshTunnelService sshTunnelService, ErdLayoutService erdLayoutService) {
         this.connectionManager = connectionManager;
         this.connectionConfig = connectionConfig;
         this.sshTunnelService = sshTunnelService;
+        this.erdLayoutService = erdLayoutService;
         this.connections = new ArrayList<>(connectionConfig.load());
     }
 
     public List<ConnectionInfo> listConnections() {
         return List.copyOf(connections);
+    }
+
+    /** Returns connection IDs that need password re-entry due to encryption key change */
+    public java.util.Set<String> getPasswordReentryRequired() {
+        return connectionConfig.getPasswordReentryRequired();
     }
 
     public ConnectionInfo getConnection(String id) {
@@ -47,6 +54,10 @@ public class ConnectionService {
                 info.setId(id);
                 connections.set(i, info);
                 connectionConfig.save(connections);
+                // Clear password re-entry flag if password was updated
+                if (info.getPassword() != null && !info.getPassword().isEmpty()) {
+                    connectionConfig.clearPasswordReentry(id);
+                }
                 return info;
             }
         }
@@ -57,6 +68,8 @@ public class ConnectionService {
         connectionManager.close(id);
         connections.removeIf(c -> c.getId().equals(id));
         connectionConfig.save(connections);
+        // Cascade: remove all saved ERD layouts for this connection
+        erdLayoutService.deleteAllForConnection(id);
     }
 
     public boolean testConnection(ConnectionInfo info) {
