@@ -2433,6 +2433,214 @@ async function exportData(format) {
 async function exportCsv() { return exportData('csv'); }
 
 // ============================================================
+// Global Right Panel (#99)
+// ============================================================
+const RightPanel = (() => {
+    const LS_OPEN = 'dbee.rightPanel.open';
+    const LS_ACTIVE = 'dbee.rightPanel.activeTab';
+    const LS_WIDTH = 'dbee.rightPanel.width';
+    const MIN_WIDTH = 240;
+    const MAX_WIDTH = 720;
+    const DEFAULT_WIDTH = 320;
+
+    const tabs = new Map();
+    let panelEl, resizerEl, tabListEl, bodyEl, closeBtn, toggleBtn;
+    let activeId = null;
+    let isOpen = false;
+    let ready = false;
+
+    function readWidth() {
+        const v = parseInt(localStorage.getItem(LS_WIDTH), 10);
+        if (!isFinite(v)) return DEFAULT_WIDTH;
+        return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, v));
+    }
+
+    function applyOpenState() {
+        if (!panelEl) return;
+        if (isOpen) {
+            panelEl.classList.remove('grp-hidden');
+            resizerEl.classList.remove('grp-hidden');
+            toggleBtn && toggleBtn.classList.add('active');
+        } else {
+            panelEl.classList.add('grp-hidden');
+            resizerEl.classList.add('grp-hidden');
+            toggleBtn && toggleBtn.classList.remove('active');
+        }
+        try { localStorage.setItem(LS_OPEN, isOpen ? '1' : '0'); } catch (e) {}
+    }
+
+    function renderTabButtons() {
+        if (!tabListEl) return;
+        tabListEl.innerHTML = '';
+        for (const t of tabs.values()) {
+            const btn = document.createElement('button');
+            btn.className = 'grp-tab' + (t.id === activeId ? ' active' : '');
+            btn.setAttribute('role', 'tab');
+            btn.setAttribute('data-tab-id', t.id);
+            btn.setAttribute('aria-selected', t.id === activeId ? 'true' : 'false');
+            if (t.icon) btn.insertAdjacentHTML('beforeend', t.icon);
+            const label = document.createElement('span');
+            label.textContent = t.label;
+            btn.appendChild(label);
+            btn.onclick = () => setActive(t.id);
+            t.btnEl = btn;
+            tabListEl.appendChild(btn);
+        }
+    }
+
+    function ensurePane(tab) {
+        if (!tab.paneEl) {
+            const pane = document.createElement('div');
+            pane.className = 'grp-tab-pane';
+            pane.setAttribute('data-tab-pane', tab.id);
+            bodyEl.appendChild(pane);
+            tab.paneEl = pane;
+        }
+        if (!tab.mounted && typeof tab.render === 'function') {
+            try { tab.render(tab.paneEl); }
+            catch (e) { console.error('[RightPanel] tab render error', tab.id, e); }
+            tab.mounted = true;
+        }
+    }
+
+    function showActivePane() {
+        if (!bodyEl) return;
+        bodyEl.querySelectorAll('.grp-tab-pane').forEach(p => p.classList.remove('active'));
+        tabListEl.querySelectorAll('.grp-tab').forEach(b => {
+            const id = b.getAttribute('data-tab-id');
+            b.classList.toggle('active', id === activeId);
+            b.setAttribute('aria-selected', id === activeId ? 'true' : 'false');
+        });
+        if (!activeId) return;
+        const tab = tabs.get(activeId);
+        if (!tab) return;
+        ensurePane(tab);
+        tab.paneEl.classList.add('active');
+    }
+
+    function setActive(tabId) {
+        if (!tabs.has(tabId)) return;
+        activeId = tabId;
+        try { localStorage.setItem(LS_ACTIVE, tabId); } catch (e) {}
+        showActivePane();
+    }
+
+    function open(tabId) {
+        if (!ready) { isOpen = true; return; }
+        if (tabId && tabs.has(tabId)) {
+            activeId = tabId;
+            try { localStorage.setItem(LS_ACTIVE, tabId); } catch (e) {}
+        } else if (!activeId && tabs.size > 0) {
+            activeId = tabs.keys().next().value;
+        }
+        isOpen = true;
+        applyOpenState();
+        showActivePane();
+    }
+
+    function close() {
+        isOpen = false;
+        applyOpenState();
+    }
+
+    function toggle() {
+        if (isOpen) close(); else open();
+    }
+
+    function setWidth(px) {
+        const w = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, Math.round(px)));
+        if (panelEl) panelEl.style.width = w + 'px';
+        try { localStorage.setItem(LS_WIDTH, String(w)); } catch (e) {}
+    }
+
+    function registerTab(tab) {
+        if (!tab || !tab.id || !tab.label) {
+            throw new Error('RightPanel.registerTab requires {id, label}');
+        }
+        tabs.set(tab.id, {
+            id: tab.id,
+            label: tab.label,
+            icon: tab.icon || '',
+            render: tab.render,
+            mounted: false,
+            paneEl: null,
+            btnEl: null,
+        });
+        if (ready) {
+            renderTabButtons();
+            if (isOpen) showActivePane();
+        }
+    }
+
+    function initResize() {
+        let resizing = false;
+        resizerEl.addEventListener('mousedown', (e) => {
+            resizing = true;
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+            e.preventDefault();
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!resizing) return;
+            const w = window.innerWidth - e.clientX;
+            setWidth(w);
+        });
+        document.addEventListener('mouseup', () => {
+            if (resizing) {
+                resizing = false;
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+            }
+        });
+    }
+
+    function init() {
+        panelEl = document.getElementById('global-right-panel');
+        resizerEl = document.getElementById('global-right-resizer');
+        tabListEl = document.getElementById('grp-tab-list');
+        bodyEl = document.getElementById('grp-body');
+        closeBtn = document.getElementById('grp-close');
+        toggleBtn = document.getElementById('btn-toggle-right-panel');
+
+        if (!panelEl) return;
+
+        panelEl.style.width = readWidth() + 'px';
+
+        const savedActive = localStorage.getItem(LS_ACTIVE);
+        if (savedActive) activeId = savedActive;
+        const savedOpen = localStorage.getItem(LS_OPEN) === '1';
+
+        closeBtn && (closeBtn.onclick = close);
+        initResize();
+
+        // Built-in placeholder tab — future tabs (#100~#107) may replace/extend
+        registerTab({
+            id: 'inspector',
+            label: 'Inspector',
+            icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+            render: (el) => {
+                el.innerHTML = '<div class="grp-empty">'
+                    + '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>'
+                    + '<div>컨텍스트 정보가 여기에 표시됩니다.</div>'
+                    + '<div style="font-size:11px;opacity:0.7">테이블·행·쿼리 선택 시 상세 정보 (후속 작업)</div>'
+                    + '</div>';
+            },
+        });
+
+        ready = true;
+        renderTabButtons();
+
+        if (savedOpen) {
+            open(activeId);
+        } else {
+            applyOpenState();
+        }
+    }
+
+    return { init, registerTab, open, close, toggle, setActive, setWidth };
+})();
+
+// ============================================================
 // Resizers
 // ============================================================
 function initResizers() {
@@ -4832,6 +5040,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initAiChat();
     initAiSettings();
     initResizers();
+    RightPanel.init();
     initMonaco();
     loadConnections();
     loadSnippetsCache();
