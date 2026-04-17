@@ -207,6 +207,11 @@ function initMonaco() {
             toggleAiChatPanel();
         });
 
+        // Ctrl+Shift+R to toggle Right Panel
+        monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyR, () => {
+            if (typeof RightPanel !== 'undefined') RightPanel.toggle();
+        });
+
         // Add AI context menu actions
         monacoEditor.addAction({ id: 'ai-explain', label: 'AI: Explain SQL', contextMenuGroupId: 'ai', run: aiExplainSql });
         monacoEditor.addAction({ id: 'ai-optimize', label: 'AI: Optimize SQL', contextMenuGroupId: 'ai', run: aiOptimizeSql });
@@ -3354,6 +3359,13 @@ function initEventHandlers() {
             return;
         }
 
+        // Ctrl/Cmd+Shift+R — Toggle Right Panel (overrides browser hard-refresh)
+        if (mod && e.shiftKey && (e.key === 'R' || e.key === 'r')) {
+            e.preventDefault();
+            if (typeof RightPanel !== 'undefined') RightPanel.toggle();
+            return;
+        }
+
         // Ctrl/Cmd+S — Save current query
         if (mod && e.key === 's') {
             e.preventDefault();
@@ -3812,6 +3824,7 @@ const CMD_PALETTE_COMMANDS = [
     { name: 'Export SQL INSERT', action: () => exportData('insert') },
     { name: 'Query History', shortcut: 'Alt+H', action: showHistoryDialog },
     { name: 'AI Chat', shortcut: 'Ctrl+Shift+A', action: toggleAiChatPanel },
+    { name: 'Toggle Right Panel', shortcut: 'Ctrl+Shift+R', action: () => { if (typeof RightPanel !== 'undefined') RightPanel.toggle(); } },
     { name: 'AI Settings', action: showAiSettingsDialog },
     { name: 'AI: Explain SQL', action: aiExplainSql },
     { name: 'AI: Optimize SQL', action: aiOptimizeSql },
