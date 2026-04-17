@@ -21,4 +21,26 @@ public class OracleDialect implements DatabaseDialect {
     public MetadataReader createMetadataReader(Connection connection) {
         return new JdbcMetadataReader(connection);
     }
+
+    @Override
+    public String getExplainQuery(String sql) {
+        // Oracle uses EXPLAIN PLAN FOR ... then SELECT from plan table
+        return "EXPLAIN PLAN FOR " + sql;
+    }
+
+    @Override
+    public String getExplainAnalyzeQuery(String sql) {
+        return null; // Oracle doesn't support EXPLAIN ANALYZE directly
+    }
+
+    @Override
+    public boolean supportsExplainAnalyze() {
+        return false;
+    }
+
+    @Override
+    public String getShowCreateTableQuery(String schema, String table) {
+        String owner = schema != null ? "'" + schema + "'" : "USER";
+        return "SELECT DBMS_METADATA.GET_DDL('TABLE', '" + table + "', " + owner + ") AS DDL FROM DUAL";
+    }
 }

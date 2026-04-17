@@ -7,151 +7,182 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://uicdn.toast.com/editor/latest/toastui-editor.min.css">
-    <link rel="stylesheet" href="https://uicdn.toast.com/editor/latest/theme/toastui-editor-dark.min.css">
+    <link rel="stylesheet" href="https://uicdn.toast.com/editor/3.2.2/toastui-editor.min.css">
+    <link rel="stylesheet" href="https://uicdn.toast.com/editor/3.2.2/theme/toastui-editor-dark.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xyflow/react@12.4.4/dist/style.css">
     <link rel="stylesheet" href="/css/app.css">
 </head>
 <body>
     <!-- Toolbar -->
     <div id="toolbar">
         <div class="toolbar-brand">
-            <svg width="28" height="28" viewBox="0 0 32 32" class="brand-logo">
-                <defs>
-                    <linearGradient id="tg" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%" stop-color="#F5A623">
-                            <animate attributeName="stop-color" values="#F5A623;#F7C948;#FFD700;#F5A623" dur="4s" repeatCount="indefinite"/>
-                        </stop>
-                        <stop offset="100%" stop-color="#F7C948">
-                            <animate attributeName="stop-color" values="#F7C948;#FFD700;#F5A623;#F7C948" dur="4s" repeatCount="indefinite"/>
-                        </stop>
-                    </linearGradient>
-                    <filter id="glow">
-                        <feGaussianBlur stdDeviation="1" result="blur"/>
-                        <feComposite in="SourceGraphic" in2="blur" operator="over"/>
-                    </filter>
-                </defs>
-                <rect width="32" height="32" rx="7" fill="var(--logo-bg, #1A1A2E)"/>
-                <!-- Bee body -->
-                <ellipse cx="16" cy="17" rx="6.5" ry="7" fill="url(#tg)" filter="url(#glow)" opacity="0">
-                    <animate attributeName="opacity" from="0" to="1" dur="0.5s" fill="freeze" begin="0.2s"/>
-                </ellipse>
-                <!-- Stripes -->
-                <rect x="9.5" y="14" width="13" height="2" rx="1" fill="#1A1A2E" opacity="0">
-                    <animate attributeName="opacity" from="0" to="0.7" dur="0.3s" fill="freeze" begin="0.6s"/>
-                </rect>
-                <rect x="9.5" y="18" width="13" height="2" rx="1" fill="#1A1A2E" opacity="0">
-                    <animate attributeName="opacity" from="0" to="0.7" dur="0.3s" fill="freeze" begin="0.7s"/>
-                </rect>
-                <!-- Head -->
-                <circle cx="16" cy="9" r="4" fill="url(#tg)" opacity="0">
-                    <animate attributeName="opacity" from="0" to="1" dur="0.4s" fill="freeze" begin="0.4s"/>
-                </circle>
-                <!-- Eyes -->
-                <circle cx="14.2" cy="8.5" r="1.2" fill="#1A1A2E" opacity="0">
-                    <animate attributeName="opacity" from="0" to="1" dur="0.3s" fill="freeze" begin="0.8s"/>
-                </circle>
-                <circle cx="17.8" cy="8.5" r="1.2" fill="#1A1A2E" opacity="0">
-                    <animate attributeName="opacity" from="0" to="1" dur="0.3s" fill="freeze" begin="0.8s"/>
-                </circle>
-                <circle cx="14.5" cy="8.2" r="0.4" fill="white" opacity="0">
-                    <animate attributeName="opacity" from="0" to="1" dur="0.2s" fill="freeze" begin="1s"/>
-                </circle>
-                <circle cx="18.1" cy="8.2" r="0.4" fill="white" opacity="0">
-                    <animate attributeName="opacity" from="0" to="1" dur="0.2s" fill="freeze" begin="1s"/>
-                </circle>
-                <!-- Antennae -->
-                <path d="M14 5.5Q12 2 10 3" fill="none" stroke="#F5A623" stroke-width="1.2" stroke-linecap="round"
-                    stroke-dasharray="10" stroke-dashoffset="10">
-                    <animate attributeName="stroke-dashoffset" from="10" to="0" dur="0.4s" fill="freeze" begin="1.1s"/>
-                </path>
-                <path d="M18 5.5Q20 2 22 3" fill="none" stroke="#F5A623" stroke-width="1.2" stroke-linecap="round"
-                    stroke-dasharray="10" stroke-dashoffset="10">
-                    <animate attributeName="stroke-dashoffset" from="10" to="0" dur="0.4s" fill="freeze" begin="1.1s"/>
-                </path>
-                <circle cx="10" cy="3" r="1" fill="#F7C948" opacity="0">
-                    <animate attributeName="opacity" from="0" to="1" dur="0.3s" fill="freeze" begin="1.4s"/>
-                </circle>
-                <circle cx="22" cy="3" r="1" fill="#F7C948" opacity="0">
-                    <animate attributeName="opacity" from="0" to="1" dur="0.3s" fill="freeze" begin="1.4s"/>
-                </circle>
-                <!-- Wings with flutter -->
-                <ellipse cx="10.5" cy="13" rx="3.5" ry="2.5" fill="white" opacity="0" transform="rotate(-20 10.5 13)">
-                    <animate attributeName="opacity" values="0;0.5;0.35;0.5" dur="0.8s" fill="freeze" begin="0.5s"/>
-                    <animate attributeName="ry" values="2.5;2;2.5" dur="0.6s" repeatCount="indefinite" begin="2s"/>
-                </ellipse>
-                <ellipse cx="21.5" cy="13" rx="3.5" ry="2.5" fill="white" opacity="0" transform="rotate(20 21.5 13)">
-                    <animate attributeName="opacity" values="0;0.5;0.35;0.5" dur="0.8s" fill="freeze" begin="0.5s"/>
-                    <animate attributeName="ry" values="2.5;2;2.5" dur="0.6s" repeatCount="indefinite" begin="2s"/>
-                </ellipse>
-                <!-- Honey particles -->
-                <circle cx="12" cy="22" r="0.8" fill="#F5A623" opacity="0">
-                    <animate attributeName="cy" values="22;26;22" dur="2s" repeatCount="indefinite" begin="2.5s"/>
-                    <animate attributeName="opacity" values="0;0.7;0" dur="2s" repeatCount="indefinite" begin="2.5s"/>
-                </circle>
-                <circle cx="20" cy="23" r="0.6" fill="#F7C948" opacity="0">
-                    <animate attributeName="cy" values="23;28;23" dur="2.4s" repeatCount="indefinite" begin="3s"/>
-                    <animate attributeName="opacity" values="0;0.6;0" dur="2.4s" repeatCount="indefinite" begin="3s"/>
-                </circle>
-            </svg>
+            <span class="brand-icon">🐝</span>
             <span class="brand-name">DBee</span>
         </div>
-        <div class="toolbar-divider"></div>
-        <div class="toolbar-group">
-            <button id="btn-add-conn" class="btn btn-primary" title="Add Connection">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
-                Connection
-            </button>
-        </div>
-        <div class="toolbar-divider"></div>
-        <div class="toolbar-group">
-            <button id="btn-run" class="btn btn-success" title="Execute (Ctrl+Enter)">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                Run
-            </button>
-            <button id="btn-new-tab" class="btn btn-ghost" title="New Tab">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                Tab
-            </button>
-        </div>
-        <div class="toolbar-divider"></div>
-        <div class="toolbar-group">
-            <button id="btn-export" class="btn btn-ghost" title="Export CSV">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                Export
-            </button>
-        </div>
-        <div class="toolbar-divider"></div>
-        <div class="toolbar-group">
-            <button id="btn-history" class="btn btn-ghost" title="Query History">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                History
-            </button>
-            <button id="btn-notes" class="btn btn-ghost" title="Notes">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-                Notes
-            </button>
-        </div>
+        <!-- Desktop-style Menu Bar -->
+        <nav class="menubar">
+            <div class="menu-item">
+                <button class="menu-trigger">File</button>
+                <div class="menu-dropdown">
+                    <button id="btn-add-conn" class="menu-action">New Connection</button>
+                    <div class="menu-separator"></div>
+                    <button id="btn-save-query" class="menu-action">Save Query <span class="menu-shortcut">Ctrl+S</span></button>
+                    <button id="btn-saved-queries" class="menu-action">Saved Queries <span class="menu-shortcut">Alt+S</span></button>
+                    <div class="menu-separator"></div>
+                    <button id="btn-notes" class="menu-action">Notes</button>
+                    <div class="menu-separator"></div>
+                    <button class="menu-action" onclick="exportConnections()">Export Connections</button>
+                    <button class="menu-action" onclick="importConnections()">Import Connections</button>
+                    <div class="menu-separator"></div>
+                    <button class="menu-action" onclick="showImportDialog()">Import Data...</button>
+                    <button id="btn-history" class="menu-action">Query History <span class="menu-shortcut">Alt+H</span></button>
+                </div>
+            </div>
+            <div class="menu-item">
+                <button class="menu-trigger">Edit</button>
+                <div class="menu-dropdown">
+                    <button id="btn-format" class="menu-action">Format SQL <span class="menu-shortcut">Ctrl+Shift+F</span></button>
+                    <div class="menu-separator"></div>
+                    <button id="btn-new-tab" class="menu-action">New Tab <span class="menu-shortcut">Alt+N</span></button>
+                </div>
+            </div>
+            <div class="menu-item">
+                <button class="menu-trigger">Query</button>
+                <div class="menu-dropdown">
+                    <button id="btn-run" class="menu-action menu-action-primary">Run <span class="menu-shortcut">Ctrl+Enter</span></button>
+                    <div class="menu-separator"></div>
+                    <div class="menu-separator"></div>
+                    <div class="menu-label">Transaction</div>
+                    <button class="menu-action" onclick="executeTxn('BEGIN')">BEGIN</button>
+                    <button class="menu-action" onclick="executeTxn('COMMIT')" style="color:var(--success)">COMMIT</button>
+                    <button class="menu-action" onclick="executeTxn('ROLLBACK')" style="color:var(--error)">ROLLBACK</button>
+                    <div class="menu-separator"></div>
+                    <button id="btn-explain" class="menu-action">Explain <span class="menu-shortcut">Ctrl+E</span></button>
+                    <button id="btn-explain-analyze" class="menu-action">Explain Analyze <span class="menu-shortcut">Ctrl+Shift+E</span></button>
+                </div>
+            </div>
+            <div class="menu-item">
+                <button class="menu-trigger">Export</button>
+                <div class="menu-dropdown" id="export-dropdown">
+                    <div class="menu-label">Query Results</div>
+                    <button class="menu-action export-option" data-format="csv">CSV <span class="menu-shortcut">Alt+X</span></button>
+                    <button class="menu-action export-option" data-format="json">JSON</button>
+                    <button class="menu-action export-option" data-format="xlsx">Excel (XLSX)</button>
+                    <button class="menu-action export-option" data-format="xml">XML</button>
+                    <button class="menu-action export-option" data-format="insert">SQL INSERT</button>
+                    <div class="menu-separator"></div>
+                    <div class="menu-label">ERD</div>
+                    <button class="menu-action" onclick="menuErdExport('json')">ERD JSON (with positions)</button>
+                    <button class="menu-action" onclick="menuErdExport('png')">ERD PNG</button>
+                    <button class="menu-action" onclick="menuErdExport('svg')">ERD SVG</button>
+                    <button class="menu-action" onclick="menuErdExport('mermaid')">ERD Mermaid</button>
+                    <button class="menu-action" onclick="menuErdExport('dbml')">ERD DBML</button>
+                    <button class="menu-action" onclick="menuErdExport('ddl')">ERD SQL DDL</button>
+                    <button class="menu-action" onclick="menuErdExport('plantuml')">ERD PlantUML</button>
+                    <div class="menu-separator"></div>
+                    <button class="menu-action" onclick="menuErdImport()">Import ERD JSON…</button>
+                </div>
+            </div>
+            <div class="menu-item">
+                <button class="menu-trigger">View</button>
+                <div class="menu-dropdown">
+                    <button class="menu-action" id="btn-toggle-toolbar" onclick="toggleIconToolbar()">Hide Toolbar</button>
+                    <button class="menu-action" onclick="showChartDialog()">Chart Visualization</button>
+                    <button class="menu-action" onclick="showEditorSettings()">Editor Settings</button>
+                    <div class="menu-separator"></div>
+                    <div class="menu-label">Zoom</div>
+                    <button class="menu-action" onclick="adjustZoom(1)">Zoom In <span class="menu-shortcut">Ctrl+=</span></button>
+                    <button class="menu-action" onclick="adjustZoom(-1)">Zoom Out <span class="menu-shortcut">Ctrl+-</span></button>
+                    <button class="menu-action" onclick="adjustZoom(0)">Reset Zoom</button>
+                    <div class="menu-separator"></div>
+                    <div class="menu-label">Language</div>
+                    <button class="menu-action" onclick="setLanguage('en')">English</button>
+                    <button class="menu-action" onclick="setLanguage('ko')">한국어</button>
+                    <button class="menu-action" onclick="setLanguage('ja')">日本語</button>
+                    <button class="menu-action" onclick="showCommandPalette()">Command Palette <span class="menu-shortcut">Ctrl+P</span></button>
+                    <div class="menu-separator"></div>
+                    <div class="menu-label">Theme</div>
+                    <button class="menu-action theme-btn" data-theme="normal">Normal</button>
+                    <button class="menu-action theme-btn" data-theme="light">Light</button>
+                    <button class="menu-action theme-btn" data-theme="dark">Dark</button>
+                    <button class="menu-action theme-btn" data-theme="high-contrast">High Contrast</button>
+                </div>
+            </div>
+            <div class="menu-item">
+                <button class="menu-trigger">Tools</button>
+                <div class="menu-dropdown">
+                    <button class="menu-action" onclick="showDashboard()">Dashboard (AI)</button>
+                    <div class="menu-separator"></div>
+                    <button class="menu-action" onclick="showSchemaCompare()">Schema Compare</button>
+                    <button class="menu-action" onclick="showDataCompare()">Data Compare</button>
+                    <div class="menu-separator"></div>
+                    <div class="menu-separator"></div>
+                    <button class="menu-action" onclick="exportSchemaDoc()">Export Schema Documentation</button>
+                    <div class="menu-separator"></div>
+                    <button class="menu-action" onclick="showProcessList()">Active Sessions</button>
+                    <button class="menu-action" onclick="showDbStatus()">DB Status</button>
+                    <div class="menu-separator"></div>
+                    <div class="menu-label">Integrations</div>
+                    <button class="menu-action" onclick="publishToConfluence()">Publish to Confluence</button>
+                    <button class="menu-action" onclick="createJiraIssue()">Create Jira Issue</button>
+                </div>
+            </div>
+            <div class="menu-item">
+                <button class="menu-trigger">AI</button>
+                <div class="menu-dropdown">
+                    <button id="btn-ai-chat" class="menu-action">AI Chat <span class="menu-shortcut">Ctrl+Shift+A</span></button>
+                    <div class="menu-separator"></div>
+                    <button class="menu-action" onclick="aiAlterSchema()">Alter Schema (natural language)</button>
+                    <button id="btn-ai-settings" class="menu-action">AI Settings</button>
+                </div>
+            </div>
+        </nav>
         <div class="toolbar-spacer"></div>
-        <div class="toolbar-group">
-            <div class="theme-switcher" id="theme-switcher">
-                <button class="theme-btn active" data-theme="normal" title="Normal">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
-                </button>
-                <button class="theme-btn" data-theme="light" title="Light">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-                </button>
-                <button class="theme-btn" data-theme="dark" title="Dark">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-                </button>
-            </div>
+        <div class="toolbar-badge" id="toolbar-conn-badge">
+            <span class="badge-dot"></span>
+            <span class="badge-text">No connection</span>
         </div>
-        <div class="toolbar-divider"></div>
-        <div class="toolbar-group">
-            <div class="toolbar-badge" id="toolbar-conn-badge">
-                <span class="badge-dot"></span>
-                <span class="badge-text">No connection</span>
-            </div>
-        </div>
+    </div>
+
+    <!-- Icon Toolbar (below menu bar) -->
+    <div id="icon-toolbar">
+        <button class="tb-btn" onclick="document.getElementById('btn-add-conn').click()" title="New Connection">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+        </button>
+        <div class="tb-sep"></div>
+        <button class="tb-btn tb-btn-run" onclick="executeQuery()" title="Run (Ctrl+Enter)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        </button>
+        <button class="tb-btn" onclick="executeExplain(false)" title="Explain (Ctrl+E)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        </button>
+        <button class="tb-btn" onclick="formatSql()" title="Format (Ctrl+Shift+F)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="21" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="21" y1="18" x2="3" y2="18"/></svg>
+        </button>
+        <div class="tb-sep"></div>
+        <button class="tb-btn" onclick="saveCurrentQuery()" title="Save Query (Ctrl+S)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+        </button>
+        <button class="tb-btn" onclick="exportData('csv')" title="Export CSV (Alt+X)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </button>
+        <button class="tb-btn" onclick="menuErdExport('json')" title="Export ERD (JSON)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><line x1="10" y1="6.5" x2="14" y2="6.5"/><line x1="6.5" y1="10" x2="6.5" y2="14"/></svg>
+        </button>
+        <button class="tb-btn" onclick="menuErdImport()" title="Import ERD JSON">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </button>
+        <div class="tb-sep"></div>
+        <button class="tb-btn" onclick="addEditorTab()" title="New Tab (Alt+N)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+        <button class="tb-btn" onclick="showHistoryDialog()" title="History (Alt+H)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </button>
+        <div class="tb-sep"></div>
+        <button class="tb-btn" onclick="toggleAiChatPanel()" title="AI Chat (Ctrl+Shift+A)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        </button>
     </div>
 
     <!-- Main Layout -->
@@ -178,6 +209,70 @@
                 </button>
             </div>
             <div id="editor-container"></div>
+            <div id="erd-view" class="erd-view" style="display:none;">
+                <div class="erd-toolbar">
+                    <div class="erd-toolbar-group">
+                        <label>Layout:</label>
+                        <select id="erd-layout-select">
+                            <option value="force" selected>Force (shortest edges)</option>
+                            <option value="dagre-lr">Hierarchy (LR)</option>
+                            <option value="dagre-tb">Hierarchy (TB)</option>
+                            <option value="dagre-rl">Hierarchy (RL)</option>
+                            <option value="dagre-bt">Hierarchy (BT)</option>
+                            <option value="grid">Grid</option>
+                            <option value="circle">Circle</option>
+                        </select>
+                        <button id="erd-btn-arrange" class="btn btn-ghost btn-sm" title="Re-run layout">Auto-arrange</button>
+                        <label>Edges:</label>
+                        <select id="erd-edge-style">
+                            <option value="bezier" selected>Bezier (curved)</option>
+                            <option value="straight">Straight lines</option>
+                            <option value="step">Orthogonal (step)</option>
+                            <option value="crowsfoot">Crow's foot (ER)</option>
+                        </select>
+                    </div>
+                    <div class="erd-toolbar-group">
+                        <label><input type="checkbox" id="erd-opt-hide-cols"> Hide columns</label>
+                        <label><input type="checkbox" id="erd-opt-hide-types"> Hide types</label>
+                        <label><input type="checkbox" id="erd-opt-pkfk"> PK/FK only</label>
+                    </div>
+                    <div class="erd-toolbar-group">
+                        <label><input type="checkbox" id="erd-opt-focus"> Focus mode</label>
+                        <label><input type="checkbox" id="erd-opt-minimap"> Minimap</label>
+                        <input type="text" id="erd-search" class="erd-search" placeholder="Search tables...">
+                    </div>
+                    <div class="erd-toolbar-group erd-toolbar-right">
+                        <button id="erd-btn-save" class="btn btn-ghost btn-sm" title="Save layout">💾 Save</button>
+                        <button id="erd-btn-reset" class="btn btn-ghost btn-sm" title="Reset layout (delete saved positions)">🔄 Reset</button>
+                        <div class="erd-dropdown">
+                            <button id="erd-btn-export" class="btn btn-ghost btn-sm">Export ▾</button>
+                            <div id="erd-export-menu" class="erd-dropdown-menu" style="display:none;">
+                                <div data-fmt="json">DBee JSON (with positions)</div>
+                                <div data-fmt="png">PNG Image</div>
+                                <div data-fmt="svg">SVG Image</div>
+                                <div data-fmt="mermaid">Mermaid</div>
+                                <div data-fmt="dbml">DBML (dbdiagram.io)</div>
+                                <div data-fmt="ddl">SQL DDL</div>
+                                <div data-fmt="plantuml">PlantUML</div>
+                            </div>
+                        </div>
+                        <button id="erd-btn-import" class="btn btn-ghost btn-sm" title="Import JSON layout">Import</button>
+                        <input type="file" id="erd-import-file" accept=".json" style="display:none;">
+                    </div>
+                </div>
+                <div id="erd-canvas-wrap" class="erd-canvas-wrap">
+                    <div id="erd-canvas" class="erd-canvas"></div>
+                    <div id="erd-zoom-controls" class="erd-zoom-controls">
+                        <button id="erd-zoom-in" title="Zoom in">+</button>
+                        <button id="erd-zoom-out" title="Zoom out">−</button>
+                        <button id="erd-zoom-fit" title="Fit to screen"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg></button>
+                        <button id="erd-zoom-reset" title="Reset zoom (100%)">1:1</button>
+                        <div id="erd-zoom-label" class="erd-zoom-label">100%</div>
+                    </div>
+                    <div id="erd-minimap" class="erd-minimap" style="display:none;"></div>
+                    <div id="erd-status" class="erd-status"></div>
+                </div>
+            </div>
 
             <!-- Horizontal Resizer -->
             <div id="h-resizer"><div class="resizer-handle-h"></div></div>
@@ -203,6 +298,37 @@
                     </div>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- AI Chat Panel (slide-out) -->
+    <div id="ai-chat-panel" class="ai-chat-panel" style="display:none;">
+        <div class="ai-chat-header">
+            <div class="ai-chat-header-left">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 2.8 4 6 4 6s4-3.2 4-6a4 4 0 0 0-4-4z"/><circle cx="12" cy="6" r="1.5"/><path d="M6 12c-2 0-4 1-4 3s2 3 4 3"/><path d="M18 12c2 0 4 1 4 3s-2 3-4 3"/><path d="M8 21c0-2 2-3 4-3s4 1 4 3"/></svg>
+                <span>AI Chat</span>
+            </div>
+            <div class="ai-chat-header-right">
+                <button id="btn-ai-chat-clear" class="btn-icon" title="Clear chat">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                </button>
+                <button id="btn-ai-chat-close" class="btn-icon" title="Close">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+        </div>
+        <div id="ai-chat-messages" class="ai-chat-messages">
+            <div class="ai-chat-welcome">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.4"><path d="M12 2a4 4 0 0 0-4 4c0 2.8 4 6 4 6s4-3.2 4-6a4 4 0 0 0-4-4z"/><circle cx="12" cy="6" r="1.5"/><path d="M6 12c-2 0-4 1-4 3s2 3 4 3"/><path d="M18 12c2 0 4 1 4 3s-2 3-4 3"/><path d="M8 21c0-2 2-3 4-3s4 1 4 3"/></svg>
+                <p>Ask a question in natural language and I'll generate SQL for you.</p>
+                <p class="ai-chat-hint">Example: "Show all members who enrolled after 2024"</p>
+            </div>
+        </div>
+        <div class="ai-chat-input-area">
+            <textarea id="ai-chat-input" placeholder="Ask a question..." rows="2"></textarea>
+            <button id="btn-ai-chat-send" class="btn btn-primary btn-sm" title="Send (Enter)">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+            </button>
         </div>
     </div>
 
@@ -238,6 +364,21 @@
                         <input type="text" id="conn-name" placeholder="My Database">
                     </div>
                     <div class="form-row">
+                        <label for="conn-group">Group</label>
+                        <input type="text" id="conn-group" placeholder="e.g. Production, Staging, Dev">
+                    </div>
+                    <div class="form-row">
+                        <label for="conn-color">Color</label>
+                        <select id="conn-color">
+                            <option value="">None</option>
+                            <option value="#ff6b6b">🔴 Red (Production)</option>
+                            <option value="#fbbf24">🟡 Yellow (Staging)</option>
+                            <option value="#3dd68c">🟢 Green (Dev)</option>
+                            <option value="#6382ff">🔵 Blue</option>
+                            <option value="#c084fc">🟣 Purple</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
                         <label for="conn-type">Type</label>
                         <select id="conn-type">
                             <option value="MYSQL">MySQL</option>
@@ -246,6 +387,10 @@
                             <option value="SQLITE">SQLite</option>
                             <option value="MSSQL">SQL Server</option>
                             <option value="ATHENA">Amazon Athena</option>
+                            <option value="CLICKHOUSE">ClickHouse</option>
+                            <option value="DUCKDB">DuckDB</option>
+                            <option value="MONGODB">MongoDB</option>
+                            <option value="REDIS">Redis</option>
                         </select>
                     </div>
                 </div>
@@ -453,10 +598,251 @@
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                         <input type="text" id="history-search" class="history-search" placeholder="Search queries...">
                     </div>
+                    <button id="btn-history-stats" class="btn btn-ghost btn-sm" title="Query Statistics">Stats</button>
                     <button id="btn-clear-history" class="btn btn-ghost btn-sm" style="color:var(--error)" title="Clear All History">Clear All</button>
                 </div>
                 <div id="history-list" class="history-list"></div>
             </div>
+        </div>
+    </div>
+
+    <!-- Chart Modal -->
+    <div id="chart-dialog" class="modal" style="display:none;">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content modal-wide" style="max-width:800px;height:600px;">
+            <div class="modal-header">
+                <h3>Chart Visualization</h3>
+                <button class="modal-close" onclick="document.getElementById('chart-dialog').style.display='none'">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div style="padding:10px 20px;display:flex;gap:10px;align-items:center;">
+                <select id="chart-type" class="btn btn-ghost btn-sm" onchange="renderChart()">
+                    <option value="bar">Bar</option>
+                    <option value="line">Line</option>
+                    <option value="pie">Pie</option>
+                    <option value="doughnut">Doughnut</option>
+                </select>
+                <select id="chart-label-col" class="btn btn-ghost btn-sm" onchange="renderChart()"></select>
+                <select id="chart-data-col" class="btn btn-ghost btn-sm" onchange="renderChart()"></select>
+            </div>
+            <div style="flex:1;padding:10px 20px;overflow:hidden;">
+                <canvas id="chart-canvas"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Import Dialog -->
+    <div id="import-dialog" class="modal" style="display:none;">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Import Data</h3>
+                <button class="modal-close" onclick="document.getElementById('import-dialog').style.display='none'">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <form id="import-form">
+                <div class="form-section">
+                    <div class="form-row">
+                        <label for="import-type">Format</label>
+                        <select id="import-type">
+                            <option value="sql">SQL File</option>
+                            <option value="csv">CSV (into table)</option>
+                        </select>
+                    </div>
+                    <div class="form-row" id="import-table-row" style="display:none;">
+                        <label for="import-table">Target Table</label>
+                        <input type="text" id="import-table" placeholder="table_name">
+                    </div>
+                    <div class="form-row">
+                        <label for="import-file">File</label>
+                        <input type="file" id="import-file" accept=".sql,.csv,.json,.txt">
+                    </div>
+                </div>
+                <div id="import-result" style="display:none;padding:0 20px 12px;"></div>
+                <div class="form-actions">
+                    <div class="form-actions-right">
+                        <button type="button" onclick="document.getElementById('import-dialog').style.display='none'" class="btn btn-ghost">Cancel</button>
+                        <button type="button" onclick="executeImport()" class="btn btn-primary">Import</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Editor Settings Modal -->
+    <div id="editor-settings-dialog" class="modal" style="display:none;">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Editor Settings</h3>
+                <button class="modal-close" id="editor-settings-close">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <form id="editor-settings-form">
+                <div class="form-section">
+                    <div class="form-row">
+                        <label for="es-font-size">Font Size</label>
+                        <input type="number" id="es-font-size" min="10" max="30" value="14">
+                    </div>
+                    <div class="form-row">
+                        <label for="es-tab-size">Tab Size</label>
+                        <select id="es-tab-size">
+                            <option value="2">2 spaces</option>
+                            <option value="4" selected>4 spaces</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <label for="es-word-wrap">Word Wrap</label>
+                        <select id="es-word-wrap">
+                            <option value="off">Off</option>
+                            <option value="on">On</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <label for="es-minimap">Minimap</label>
+                        <select id="es-minimap">
+                            <option value="false" selected>Hidden</option>
+                            <option value="true">Visible</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <label for="es-line-numbers">Line Numbers</label>
+                        <select id="es-line-numbers">
+                            <option value="on" selected>On</option>
+                            <option value="off">Off</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-actions">
+                    <div class="form-actions-right">
+                        <button type="button" onclick="closeEditorSettings();" class="btn btn-ghost">Cancel</button>
+                        <button type="button" onclick="applyEditorSettings();" class="btn btn-primary">Apply</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Command Palette -->
+    <div id="command-palette" class="command-palette" style="display:none;">
+        <input type="text" id="cmd-palette-input" class="cmd-palette-input" placeholder="Type a command..." autocomplete="off">
+        <div id="cmd-palette-list" class="cmd-palette-list"></div>
+    </div>
+
+    <!-- ER Diagram Modal -->
+    <div id="er-dialog" class="modal" style="display:none;">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content modal-wide" style="max-width:90vw;height:80vh;">
+            <div class="modal-header">
+                <h3>ER Diagram</h3>
+                <button class="modal-close" id="er-dialog-close">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div id="er-diagram-content" style="flex:1;overflow:auto;padding:20px;"></div>
+        </div>
+    </div>
+
+    <!-- Cell Viewer Modal -->
+    <div id="cell-viewer-dialog" class="modal" style="display:none;">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="cell-viewer-title">Cell Value</h3>
+                <button class="modal-close" id="cell-viewer-close">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="cell-viewer-body">
+                <pre id="cell-viewer-content" class="cell-viewer-content"></pre>
+            </div>
+            <div class="form-actions">
+                <button type="button" id="btn-cell-copy" class="btn btn-primary btn-sm">Copy</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Saved Queries Modal -->
+    <div id="saved-queries-dialog" class="modal" style="display:none;">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content modal-history">
+            <div class="modal-header">
+                <h3>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                    Saved Queries
+                </h3>
+                <button class="modal-close" id="saved-queries-dialog-close">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="history-body">
+                <div id="saved-queries-list" class="history-list"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI Settings Modal -->
+    <div id="ai-settings-dialog" class="modal" style="display:none;">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="ai-settings-dialog-title">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 2.8 4 6 4 6s4-3.2 4-6a4 4 0 0 0-4-4z"/><circle cx="12" cy="6" r="1.5"/><path d="M6 12c-2 0-4 1-4 3s2 3 4 3"/><path d="M18 12c2 0 4 1 4 3s-2 3-4 3"/><path d="M8 21c0-2 2-3 4-3s4 1 4 3"/></svg>
+                    AI Settings
+                </h3>
+                <button class="modal-close" id="ai-settings-dialog-close">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <form id="ai-settings-form">
+                <div class="form-section">
+                    <div class="form-section-title">LLM Provider</div>
+                    <div class="form-row">
+                        <label for="ai-provider">Provider</label>
+                        <select id="ai-provider">
+                            <option value="OPENAI">OpenAI</option>
+                            <option value="CLAUDE">Claude</option>
+                            <option value="OLLAMA">Ollama</option>
+                        </select>
+                    </div>
+                    <div class="form-row" id="row-ai-apikey">
+                        <label for="ai-apikey">API Key</label>
+                        <input type="password" id="ai-apikey" placeholder="sk-... or sk-ant-...">
+                    </div>
+                    <div class="form-row">
+                        <label for="ai-baseurl">Base URL</label>
+                        <input type="text" id="ai-baseurl" placeholder="https://api.openai.com/v1">
+                    </div>
+                </div>
+                <div class="form-section">
+                    <div class="form-section-title">Model Settings</div>
+                    <div class="form-row">
+                        <label for="ai-model">Model</label>
+                        <input type="text" id="ai-model" placeholder="gpt-4o">
+                    </div>
+                    <div class="form-row">
+                        <label for="ai-temperature">Temperature</label>
+                        <div class="slider-row">
+                            <input type="range" id="ai-temperature" min="0" max="1" step="0.1" value="0.3">
+                            <span id="ai-temperature-value">0.3</span>
+                        </div>
+                    </div>
+                </div>
+                <div id="ai-test-result" class="ai-test-result" style="display:none;"></div>
+                <div class="form-actions">
+                    <button type="button" id="btn-test-ai" class="btn btn-ghost">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                        Test
+                    </button>
+                    <div class="form-actions-right">
+                        <button type="button" id="btn-cancel-ai" class="btn btn-ghost">Cancel</button>
+                        <button type="button" id="btn-save-ai" class="btn btn-primary">Save Settings</button>
+                    </div>
+                </div>
+            </form>
         </div>
     </div>
 
@@ -479,14 +865,37 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             Edit
         </div>
+        <div class="ctx-item" data-action="clone">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            Clone
+        </div>
         <div class="ctx-item ctx-danger" data-action="delete">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
             Delete
         </div>
     </div>
 
-    <script src="https://uicdn.toast.com/editor/latest/toastui-editor-all.min.js"></script>
+    <script src="https://uicdn.toast.com/editor/3.2.2/toastui-editor-all.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+    <!-- Cytoscape removed — ERD is now React Flow based (see erd-react.js) -->
+    <script src="https://cdn.jsdelivr.net/npm/sql-formatter@15.4.2/dist/sql-formatter.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/loader.js"></script>
+    <!-- React Flow (ES modules via esm.sh) for ERD viewer -->
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.3.1",
+        "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
+        "react-dom": "https://esm.sh/react-dom@18.3.1",
+        "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+        "@xyflow/react": "https://esm.sh/@xyflow/react@12.4.4?deps=react@18.3.1,react-dom@18.3.1",
+        "dagre": "https://esm.sh/dagre@0.8.5",
+      "d3-force": "https://esm.sh/d3-force@3.0.0"
+      }
+    }
+    </script>
+    <script type="module" src="/js/erd-react.js"></script>
     <script src="/js/app.js"></script>
 </body>
 </html>

@@ -21,4 +21,29 @@ public class MySQLDialect implements DatabaseDialect {
     public MetadataReader createMetadataReader(Connection connection) {
         return new JdbcMetadataReader(connection, true);
     }
+
+    @Override
+    public String getExplainQuery(String sql) {
+        return "EXPLAIN " + sql;
+    }
+
+    @Override
+    public String getExplainAnalyzeQuery(String sql) {
+        return "EXPLAIN ANALYZE " + sql;
+    }
+
+    @Override
+    public boolean supportsExplainAnalyze() {
+        return true;
+    }
+
+    @Override
+    public String quoteIdentifier(String name) {
+        return "`" + name.replace("`", "``") + "`";
+    }
+
+    @Override
+    public String getShowCreateTableQuery(String schema, String table) {
+        return "SHOW CREATE TABLE " + (schema != null ? "`" + schema + "`.`" + table + "`" : "`" + table + "`");
+    }
 }

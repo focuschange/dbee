@@ -12,7 +12,15 @@ public enum DatabaseType {
     MSSQL("SQL Server", "com.microsoft.sqlserver.jdbc.SQLServerDriver", 1433,
             "jdbc:sqlserver://{host}:{port};databaseName={database};encrypt=false"),
     ATHENA("Amazon Athena", "com.simba.athena.jdbc.Driver", 443,
-            "jdbc:awsathena://AwsRegion={region};S3OutputLocation={s3Output}");
+            "jdbc:awsathena://AwsRegion={region};S3OutputLocation={s3Output}"),
+    CLICKHOUSE("ClickHouse", "com.clickhouse.jdbc.ClickHouseDriver", 8123,
+            "jdbc:clickhouse://{host}:{port}/{database}"),
+    DUCKDB("DuckDB", "org.duckdb.DuckDBDriver", 0,
+            "jdbc:duckdb:{database}"),
+    MONGODB("MongoDB", "mongodb.jdbc.MongoDriver", 27017,
+            "jdbc:mongodb://{host}:{port}/{database}"),
+    REDIS("Redis", "jdbc.RedisDriver", 6379,
+            "jdbc:redis://{host}:{port}");
 
     private final String displayName;
     private final String driverClass;

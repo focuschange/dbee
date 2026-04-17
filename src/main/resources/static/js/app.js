@@ -32,8 +32,17 @@ const api = {
         disconnect: (id) => api.request('POST', `/api/connections/${id}/disconnect`),
     },
     query: {
-        execute: (connectionId, sql, maxRows = 1000) =>
-            api.request('POST', '/api/query/execute', { connectionId, sql, maxRows }),
+        execute: (connectionId, sql, maxRows = 1000, executionId = null) =>
+            api.request('POST', '/api/query/execute', { connectionId, sql, maxRows, executionId }),
+        cancel: (executionId) => api.request('POST', `/api/query/cancel/${executionId}`),
+        explain: (connectionId, sql, analyze = false) =>
+            api.request('POST', '/api/query/explain', { connectionId, sql, analyze }),
+        updateCell: (connectionId, schema, table, primaryKeys, column, value) =>
+            api.request('POST', '/api/query/update-cell', { connectionId, schema, table, primaryKeys, column, value }),
+        deleteRow: (connectionId, schema, table, primaryKeys) =>
+            api.request('POST', '/api/query/delete-row', { connectionId, schema, table, primaryKeys }),
+        insertRow: (connectionId, schema, table, values) =>
+            api.request('POST', '/api/query/insert-row', { connectionId, schema, table, values }),
     },
     metadata: {
         schemas: (connId) => api.request('GET', `/api/metadata/${connId}/schemas`),
@@ -42,6 +51,49 @@ const api = {
         routines: (connId, schema) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/routines`),
         events: (connId, schema) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/events`),
         autocomplete: (connId) => api.request('GET', `/api/metadata/${connId}/autocomplete`),
+        primaryKeys: (connId, schema, table) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/tables/${encodeURIComponent(table)}/primarykeys`),
+        ddl: (connId, schema, table) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/tables/${encodeURIComponent(table)}/ddl`),
+        indexes: (connId, schema, table) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/tables/${encodeURIComponent(table)}/indexes`),
+        erDiagram: (connId, schema) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/er-diagram`),
+        erGraph: (connId, schema) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/er-graph`),
+        erExport: (connId, schema, format) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/er-export/${format}`),
+        documentation: (connId, schema) => api.request('GET', `/api/metadata/${connId}/schemas/${encodeURIComponent(schema)}/documentation`),
+    },
+    llm: {
+        getSettings: () => api.request('GET', '/api/llm/settings'),
+        saveSettings: (settings) => api.request('POST', '/api/llm/settings', settings),
+        testConnection: (settings) => api.request('POST', '/api/llm/test', settings),
+        getProviders: () => api.request('GET', '/api/llm/providers'),
+        chat: (connectionId, message) => api.request('POST', '/api/llm/chat', { connectionId, message }),
+        fixSql: (connectionId, sql, errorMessage) => api.request('POST', '/api/llm/fix-sql', { connectionId, sql, errorMessage }),
+        explainSql: (sql) => api.request('POST', '/api/llm/explain-sql', { connectionId: null, message: sql }),
+        optimizeSql: (connectionId, sql) => api.request('POST', '/api/llm/optimize-sql', { connectionId, message: sql }),
+        analyzeResult: (message) => api.request('POST', '/api/llm/analyze-result', { connectionId: null, message }),
+        indexHint: (connectionId, sql) => api.request('POST', '/api/llm/index-hint', { connectionId, message: sql }),
+        ollamaModels: (baseUrl) => api.request('GET', `/api/llm/ollama-models?baseUrl=${encodeURIComponent(baseUrl)}`),
+        schemaReview: (connectionId, msg) => api.request('POST', '/api/llm/schema-review', { connectionId, message: msg }),
+        alterSql: (connectionId, msg) => api.request('POST', '/api/llm/alter-sql', { connectionId, message: msg }),
+    },
+    erdLayout: {
+        get: async (connId, schema) => {
+            const res = await fetch(`/api/erd/layout/${connId}/${encodeURIComponent(schema)}`);
+            if (res.status === 204) return null;
+            if (!res.ok) throw new Error('Failed to load layout');
+            return res.json();
+        },
+        save: (connId, schema, layout) => api.request('PUT', `/api/erd/layout/${connId}/${encodeURIComponent(schema)}`, layout),
+        delete: (connId, schema) => api.request('DELETE', `/api/erd/layout/${connId}/${encodeURIComponent(schema)}`),
+    },
+    snippets: {
+        list: () => api.request('GET', '/api/snippets'),
+        create: (s) => api.request('POST', '/api/snippets', s),
+        delete: (id) => api.request('DELETE', `/api/snippets/${id}`),
+    },
+    savedQueries: {
+        list: () => api.request('GET', '/api/saved-queries'),
+        create: (query) => api.request('POST', '/api/saved-queries', query),
+        update: (id, query) => api.request('PUT', `/api/saved-queries/${id}`, query),
+        delete: (id) => api.request('DELETE', `/api/saved-queries/${id}`),
     },
     tunnels: {
         list: () => api.request('GET', '/api/tunnels'),
@@ -66,23 +118,30 @@ const api = {
         },
         delete: (id) => api.request('DELETE', `/api/history/${id}`),
         clear: () => api.request('DELETE', '/api/history'),
+        stats: () => api.request('GET', '/api/history/stats'),
     },
     export: {
-        csv: async (connectionId, sql) => {
-            const res = await fetch('/api/export/csv', {
+        download: async (format, connectionId, sql, extra = '') => {
+            const url = `/api/export/${format}${extra}`;
+            const res = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ connectionId, sql, maxRows: 50000 })
             });
             if (!res.ok) throw new Error('Export failed');
             const blob = await res.blob();
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'export.csv';
-            a.click();
-            URL.revokeObjectURL(url);
-        }
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            const ext = format === 'insert' ? 'sql' : format;
+            link.download = `export.${ext}`;
+            link.click();
+            URL.revokeObjectURL(link.href);
+        },
+        csv: (connId, sql) => api.export.download('csv', connId, sql),
+        json: (connId, sql) => api.export.download('json', connId, sql),
+        insert: (connId, sql, tableName) => api.export.download('insert', connId, sql, `?tableName=${encodeURIComponent(tableName || 'my_table')}`),
+        xlsx: (connId, sql) => api.export.download('xlsx', connId, sql),
+        xml: (connId, sql) => api.export.download('xml', connId, sql),
     }
 };
 
@@ -133,11 +192,40 @@ function initMonaco() {
             executeQuery();
         });
 
+        // Ctrl+E to EXPLAIN
+        monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyE, () => {
+            executeExplain(false);
+        });
+
+        // Ctrl+Shift+E to EXPLAIN ANALYZE
+        monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyE, () => {
+            executeExplain(true);
+        });
+
+        // Ctrl+Shift+A to toggle AI Chat
+        monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyA, () => {
+            toggleAiChatPanel();
+        });
+
+        // Add AI context menu actions
+        monacoEditor.addAction({ id: 'ai-explain', label: 'AI: Explain SQL', contextMenuGroupId: 'ai', run: aiExplainSql });
+        monacoEditor.addAction({ id: 'ai-optimize', label: 'AI: Optimize SQL', contextMenuGroupId: 'ai', run: aiOptimizeSql });
+        monacoEditor.addAction({ id: 'ai-analyze', label: 'AI: Analyze Results', contextMenuGroupId: 'ai', run: aiAnalyzeResult });
+        monacoEditor.addAction({ id: 'ai-index-hint', label: 'AI: Suggest Indexes', contextMenuGroupId: 'ai', run: aiIndexHint });
+
         // Register SQL autocomplete provider
         registerSqlCompletionProvider();
 
-        // Create first tab
-        addEditorTab();
+        // Restore session or create first tab
+        if (!restoreEditorSession()) {
+            addEditorTab();
+        }
+
+        // Restore editor settings
+        restoreEditorSettings();
+
+        // Auto-save session periodically
+        setInterval(saveEditorSession, 5000);
     });
 }
 
@@ -161,10 +249,17 @@ const SQL_KEYWORDS = [
     'SUBSTRING', 'TRIM', 'UPPER', 'LOWER', 'LENGTH', 'REPLACE', 'NOW', 'CURRENT_TIMESTAMP',
 ];
 
+const SCHEMA_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
 async function loadAutoCompleteCache(connectionId) {
+    // Return cached if still valid
+    if (state.autocompleteCache && state.autocompleteCache.connectionId === connectionId
+        && state.autocompleteCache._ts && Date.now() - state.autocompleteCache._ts < SCHEMA_CACHE_TTL) {
+        return;
+    }
     try {
         const data = await api.metadata.autocomplete(connectionId);
-        state.autocompleteCache = { connectionId, ...data };
+        state.autocompleteCache = { connectionId, ...data, _ts: Date.now() };
     } catch (e) {
         console.warn('Failed to load autocomplete metadata:', e);
         state.autocompleteCache = null;
@@ -273,9 +368,33 @@ function registerSqlCompletionProvider() {
                 }
             }
 
+            // Snippet suggestions
+            if (state.snippetsCache) {
+                state.snippetsCache.forEach(s => {
+                    suggestions.push({
+                        label: s.prefix,
+                        kind: monaco.languages.CompletionItemKind.Snippet,
+                        insertText: s.body.replace(/\$\{\d+:([^}]+)\}/g, '$1'),
+                        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                        detail: s.name,
+                        documentation: s.description,
+                        range: range,
+                        sortText: '0_' + s.prefix,
+                    });
+                });
+            }
+
             return { suggestions: deduplicateSuggestions(suggestions) };
         }
     });
+}
+
+async function loadSnippetsCache() {
+    try {
+        state.snippetsCache = await api.snippets.list();
+    } catch (e) {
+        state.snippetsCache = [];
+    }
 }
 
 function getDotCompletions(prefix, range, fullText) {
@@ -398,16 +517,109 @@ function addEditorTab() {
     editorCounter++;
     const id = 'tab-' + editorCounter;
     const model = monaco.editor.createModel('', 'sql');
-    state.editors.push({ id, name: 'Query ' + editorCounter, model });
+    const tab = { id, type: 'sql', name: 'Query ' + editorCounter, model, savedContent: '' };
+    // Track dirty state
+    model.onDidChangeContent(() => {
+        tab.dirty = model.getValue() !== tab.savedContent;
+        renderTabs();
+    });
+    state.editors.push(tab);
     renderTabs();
     switchTab(id);
 }
 
+/**
+ * Open (or focus) an ERD tab for a given connection + schema.
+ * Returns the tab id.
+ */
+function addOrFocusErdTab(connId, connName, schema) {
+    // If an ERD tab for this conn+schema exists, just switch to it
+    const existing = state.editors.find(t => t.type === 'erd' && t.connId === connId && t.schema === schema);
+    if (existing) { switchTab(existing.id); return existing.id; }
+
+    editorCounter++;
+    const id = 'tab-' + editorCounter;
+    const tab = {
+        id, type: 'erd',
+        name: `ERD: ${connName || 'conn'}.${schema}`,
+        connId, connName, schema,
+        cy: null,       // Cytoscape instance (lazy init)
+        options: {},    // view options
+    };
+    state.editors.push(tab);
+    renderTabs();
+    switchTab(id);
+    return id;
+}
+
+function saveEditorSession() {
+    try {
+        const session = state.editors.map(t => {
+            if (t.type === 'erd') {
+                return { id: t.id, type: 'erd', name: t.name,
+                         connId: t.connId, connName: t.connName, schema: t.schema };
+            }
+            return { id: t.id, type: 'sql', name: t.name,
+                     content: t.model ? t.model.getValue() : '' };
+        });
+        localStorage.setItem('dbee-editor-session', JSON.stringify({
+            tabs: session, activeId: state.activeEditorId, counter: editorCounter
+        }));
+    } catch (e) {}
+}
+
+function restoreEditorSession() {
+    try {
+        const data = JSON.parse(localStorage.getItem('dbee-editor-session'));
+        if (!data || !data.tabs || data.tabs.length === 0) return false;
+        editorCounter = data.counter || data.tabs.length;
+        data.tabs.forEach(t => {
+            const type = t.type || 'sql';
+            if (type === 'erd') {
+                const tab = { id: t.id, type: 'erd', name: t.name,
+                              connId: t.connId, connName: t.connName, schema: t.schema,
+                              cy: null, options: {} };
+                state.editors.push(tab);
+            } else {
+                const model = monaco.editor.createModel(t.content || '', 'sql');
+                const tab = { id: t.id, type: 'sql', name: t.name, model, savedContent: t.content || '' };
+                model.onDidChangeContent(() => {
+                    tab.dirty = model.getValue() !== tab.savedContent;
+                    renderTabs();
+                });
+                state.editors.push(tab);
+            }
+        });
+        renderTabs();
+        switchTab(data.activeId || data.tabs[0].id);
+        return true;
+    } catch (e) { return false; }
+}
+
 function switchTab(id) {
+    const prevTabId = state.activeEditorId;
+    const prevTab = state.editors.find(e => e.id === prevTabId);
     state.activeEditorId = id;
     const tab = state.editors.find(e => e.id === id);
-    if (tab && monacoEditor) {
-        monacoEditor.setModel(tab.model);
+    if (!tab) { renderTabs(); return; }
+
+    const editorContainer = document.getElementById('editor-container');
+    const erdView = document.getElementById('erd-view');
+
+    // If leaving an ERD tab, destroy the React Flow root (container is shared)
+    if (prevTab && prevTab.type === 'erd' && prevTab !== tab && window.erdReact) {
+        try { window.erdReact.destroy(); } catch (e) {}
+    }
+
+    if (tab.type === 'erd') {
+        if (editorContainer) editorContainer.style.display = 'none';
+        if (erdView) erdView.style.display = 'flex';
+        // Always (re)mount on switch — React Flow lives in the shared container
+        initErdTab(tab);
+    } else {
+        if (editorContainer) editorContainer.style.display = '';
+        if (erdView) erdView.style.display = 'none';
+        if (monacoEditor && tab.model) monacoEditor.setModel(tab.model);
     }
     renderTabs();
 }
@@ -416,7 +628,15 @@ function closeTab(id) {
     const idx = state.editors.findIndex(e => e.id === id);
     if (idx === -1 || state.editors.length <= 1) return;
 
-    state.editors[idx].model.dispose();
+    const tab = state.editors[idx];
+    // For ERD tabs: if currently mounted, destroy React Flow root
+    if (tab.type === 'erd') {
+        if (tab.id === state.activeEditorId && window.erdReact) {
+            try { window.erdReact.destroy(); } catch (e) {}
+        }
+    } else if (tab.model && tab.model.dispose) {
+        tab.model.dispose();
+    }
     state.editors.splice(idx, 1);
 
     if (state.activeEditorId === id) {
@@ -431,12 +651,31 @@ function renderTabs() {
     tabList.innerHTML = '';
     state.editors.forEach(tab => {
         const div = document.createElement('div');
-        div.className = 'tab' + (tab.id === state.activeEditorId ? ' active' : '');
+        const typeClass = tab.type === 'erd' ? ' tab-erd' : '';
+        div.className = 'tab' + (tab.id === state.activeEditorId ? ' active' : '') + (tab.dirty ? ' dirty' : '') + typeClass;
+        const dirtyDot = tab.dirty ? '<span class="tab-dirty-dot">●</span>' : '';
         div.innerHTML = `
-            <span class="tab-label">${tab.name}</span>
+            <span class="tab-label">${escapeHtml(tab.name)}${dirtyDot}</span>
             ${state.editors.length > 1 ? '<span class="tab-close">&times;</span>' : ''}
         `;
         div.querySelector('.tab-label').onclick = () => switchTab(tab.id);
+        // Double-click to rename tab
+        div.querySelector('.tab-label').ondblclick = (e) => {
+            e.stopPropagation();
+            const label = e.currentTarget;
+            const input = document.createElement('input');
+            input.className = 'tab-rename-input';
+            input.value = tab.name;
+            label.replaceWith(input);
+            input.focus();
+            input.select();
+            const finish = () => {
+                tab.name = input.value.trim() || tab.name;
+                renderTabs();
+            };
+            input.onblur = finish;
+            input.onkeydown = (ke) => { if (ke.key === 'Enter') input.blur(); if (ke.key === 'Escape') { input.value = tab.name; input.blur(); } };
+        };
         const closeBtn = div.querySelector('.tab-close');
         if (closeBtn) closeBtn.onclick = (e) => { e.stopPropagation(); closeTab(tab.id); };
         tabList.appendChild(div);
@@ -445,6 +684,9 @@ function renderTabs() {
 
 function getCurrentSql() {
     if (!monacoEditor) return '';
+    // If the active tab is not an SQL tab, no SQL context available
+    const activeTab = state.editors.find(t => t.id === state.activeEditorId);
+    if (activeTab && activeTab.type !== 'sql') return '';
     const selection = monacoEditor.getModel().getValueInRange(monacoEditor.getSelection());
     return selection.trim() ? selection : monacoEditor.getValue();
 }
@@ -455,7 +697,44 @@ function getCurrentSql() {
 function renderTree() {
     const container = document.getElementById('schema-tree');
     container.innerHTML = '';
+
+    // Group connections by their group property
+    const groups = {};
+    const ungrouped = [];
     state.connections.forEach(conn => {
+        const group = conn.properties?.group;
+        if (group) {
+            if (!groups[group]) groups[group] = [];
+            groups[group].push(conn);
+        } else {
+            ungrouped.push(conn);
+        }
+    });
+
+    // Render grouped connections
+    for (const [groupName, conns] of Object.entries(groups).sort()) {
+        const groupNode = document.createElement('div');
+        groupNode.className = 'tree-node tree-group-node';
+        groupNode.innerHTML = `
+            <div class="tree-node-content tree-group-header">
+                <span class="tree-arrow">&#9654;</span>
+                <span class="tree-icon icon-group">&#9830;</span>
+                <span class="tree-label tree-group-label">${escapeHtml(groupName)}</span>
+                <span class="tree-badge group-count">${conns.length}</span>
+            </div>
+            <div class="tree-children"></div>
+        `;
+        const children = groupNode.querySelector('.tree-children');
+        conns.forEach(conn => children.appendChild(createConnectionNode(conn)));
+
+        const header = groupNode.querySelector('.tree-group-header');
+        header.onclick = () => groupNode.classList.toggle('expanded');
+        groupNode.classList.add('expanded'); // start expanded
+        container.appendChild(groupNode);
+    }
+
+    // Render ungrouped connections
+    ungrouped.forEach(conn => {
         container.appendChild(createConnectionNode(conn));
     });
 }
@@ -468,12 +747,14 @@ function createConnectionNode(conn) {
 
     const hasSsh = !!conn.properties?.sshTunnelId;
     const sshBadge = hasSsh ? '<span class="tree-badge ssh-badge" title="SSH Tunnel">SSH</span>' : '';
+    const connColor = conn.properties?.color;
+    const colorDot = connColor ? `<span class="conn-color-dot" style="background:${connColor}"></span>` : '';
 
     node.innerHTML = `
-        <div class="tree-node-content">
+        <div class="tree-node-content"${connColor ? ` style="border-left:3px solid ${connColor};padding-left:4px;"` : ''}>
             <span class="tree-arrow">&#9654;</span>
             <span class="tree-icon icon-db">&#9711;</span>
-            <span class="tree-label">${escapeHtml(conn.name || conn.databaseType)}${sshBadge}</span>
+            <span class="tree-label">${colorDot}${escapeHtml(conn.name || conn.databaseType)}${sshBadge}</span>
         </div>
         <div class="tree-children"></div>
     `;
@@ -639,6 +920,35 @@ function createSchemaNode(connId, schema, isHidden) {
     };
 
     content.ondblclick = toggle;
+    content.oncontextmenu = (e) => {
+        e.preventDefault();
+        let existing = document.getElementById('table-ctx-menu');
+        if (existing) existing.remove();
+        const menu = document.createElement('div');
+        menu.id = 'table-ctx-menu';
+        menu.className = 'context-menu';
+        menu.style.cssText = `display:block;left:${e.clientX}px;top:${e.clientY}px`;
+        menu.innerHTML = '<div class="ctx-item" data-action="er">Show ER Diagram</div><div class="ctx-item" data-action="review">AI: Review Schema</div>';
+        document.body.appendChild(menu);
+        menu.querySelector('[data-action="er"]').onclick = () => {
+            menu.remove();
+            const conn = state.connections.find(c => c.id === connId);
+            const connName = conn ? conn.name : '';
+            addOrFocusErdTab(connId, connName, schema.name);
+        };
+        menu.querySelector('[data-action="review"]').onclick = async () => {
+            menu.remove();
+            toggleAiChatPanel();
+            appendChatMessage('user', `Review the schema "${schema.name}" for design improvements`);
+            const lm = appendChatMessage('loading', '');
+            try {
+                const r = await api.llm.schemaReview(connId, `Review schema "${schema.name}"`);
+                lm.remove();
+                appendChatMessage(r.error ? 'error' : 'assistant', r.message, r.sql);
+            } catch (e) { lm.remove(); appendChatMessage('error', e.message); }
+        };
+        setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 0);
+    };
     node.querySelector('.tree-arrow').onclick = (e) => { e.stopPropagation(); toggle(); };
     return node;
 }
@@ -843,6 +1153,12 @@ function createTableNode(connId, schema, table) {
         }
     };
 
+    // Right-click context for DDL/Indexes
+    content.oncontextmenu = (e) => {
+        e.preventDefault();
+        showTableContextMenu(e, connId, schema, table.name);
+    };
+
     node.querySelector('.tree-arrow').onclick = (e) => {
         e.stopPropagation();
         if (!loaded) {
@@ -891,6 +1207,220 @@ function selectTreeNode(contentEl) {
     selectedNodeEl = contentEl;
 }
 
+async function showErDiagram(connId, schema) {
+    const dialog = document.getElementById('er-dialog');
+    const content = document.getElementById('er-diagram-content');
+    dialog.style.display = 'flex';
+    content.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted)">Loading ER diagram...</div>';
+
+    document.getElementById('er-dialog-close').onclick = () => dialog.style.display = 'none';
+    dialog.querySelector('.modal-backdrop').onclick = () => dialog.style.display = 'none';
+
+    try {
+        const result = await api.metadata.erDiagram(connId, schema);
+        content.innerHTML = `<div style="margin-bottom:10px;text-align:right;">
+            <button class="btn btn-ghost btn-sm" onclick="exportErSvg()">Export SVG</button>
+            <button class="btn btn-ghost btn-sm" onclick="exportErPng()">Export PNG</button>
+        </div><div class="mermaid">${escapeHtml(result.mermaid)}</div>`;
+        if (window.mermaid) {
+            mermaid.initialize({ startOnLoad: false, theme: document.body.dataset.theme === 'light' ? 'default' : 'dark' });
+            await mermaid.run({ nodes: content.querySelectorAll('.mermaid') });
+            attachErDiagramClickHandlers(connId, schema);
+        }
+    } catch (e) {
+        content.innerHTML = `<div style="color:var(--error);padding:20px;">Failed: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+function attachErDiagramClickHandlers(connId, schema) {
+    // Mermaid renders entity names as text in SVG — make them clickable
+    const content = document.getElementById('er-diagram-content');
+    const svgEl = content.querySelector('svg');
+    if (!svgEl) return;
+
+    // Find entity labels (g.entityLabel text elements)
+    svgEl.querySelectorAll('text').forEach(textEl => {
+        const name = textEl.textContent.trim();
+        if (!name || name.includes(' ') || name.includes('(')) return; // skip type labels
+        textEl.style.cursor = 'pointer';
+        textEl.onclick = () => {
+            if (monacoEditor) {
+                monacoEditor.setValue(`SELECT * FROM ${schema}.${name} LIMIT 100;`);
+                monacoEditor.focus();
+            }
+            document.getElementById('er-dialog').style.display = 'none';
+            updateStatus(`Loaded: SELECT * FROM ${name}`);
+        };
+    });
+}
+
+function exportErSvg() {
+    const svg = document.querySelector('#er-diagram-content svg');
+    if (!svg) { updateStatus('No diagram to export', true); return; }
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const blob = new Blob([svgData], { type: 'image/svg+xml' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'er-diagram.svg';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    updateStatus('ER diagram exported as SVG');
+}
+
+function exportErPng() {
+    const svg = document.querySelector('#er-diagram-content svg');
+    if (!svg) { updateStatus('No diagram to export', true); return; }
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+    img.onload = () => {
+        canvas.width = img.width * 2;
+        canvas.height = img.height * 2;
+        ctx.scale(2, 2);
+        ctx.drawImage(img, 0, 0);
+        canvas.toBlob(blob => {
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'er-diagram.png';
+            a.click();
+            URL.revokeObjectURL(a.href);
+            updateStatus('ER diagram exported as PNG');
+        });
+    };
+    img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+}
+
+function showTableContextMenu(e, connId, schema, tableName) {
+    // Remove any existing table context menu
+    let existing = document.getElementById('table-ctx-menu');
+    if (existing) existing.remove();
+
+    const menu = document.createElement('div');
+    menu.id = 'table-ctx-menu';
+    menu.className = 'context-menu';
+    menu.style.display = 'block';
+    menu.style.left = e.clientX + 'px';
+    menu.style.top = e.clientY + 'px';
+    menu.innerHTML = `
+        <div class="ctx-item" data-action="select-top">SELECT * (LIMIT 100)</div>
+        <div class="ctx-separator"></div>
+        <div class="ctx-item" data-action="show-ddl">Show CREATE TABLE</div>
+        <div class="ctx-item" data-action="show-indexes">Show Indexes</div>
+        <div class="ctx-item" data-action="show-fk">Show Foreign Keys</div>
+        <div class="ctx-separator"></div>
+        <div class="ctx-item" data-action="create-view">Create View from Table</div>
+        <div class="ctx-item" data-action="show-triggers">Show Triggers</div>
+        <div class="ctx-separator"></div>
+        <div class="ctx-item" data-action="ai-explain-table">AI: Explain Table</div>
+    `;
+    document.body.appendChild(menu);
+
+    menu.querySelector('[data-action="select-top"]').onclick = () => {
+        if (monacoEditor) monacoEditor.setValue(`SELECT * FROM ${schema}.${tableName} LIMIT 100;`);
+        menu.remove();
+    };
+    menu.querySelector('[data-action="show-ddl"]').onclick = async () => {
+        menu.remove();
+        await showTableDdl(connId, schema, tableName);
+    };
+    menu.querySelector('[data-action="show-indexes"]').onclick = async () => {
+        menu.remove();
+        await showTableIndexes(connId, schema, tableName);
+    };
+    menu.querySelector('[data-action="show-fk"]').onclick = async () => {
+        menu.remove();
+        await showTableForeignKeys(connId, schema, tableName);
+    };
+    menu.querySelector('[data-action="create-view"]').onclick = () => {
+        menu.remove();
+        if (monacoEditor) {
+            monacoEditor.setValue(`CREATE VIEW v_${tableName} AS\nSELECT *\nFROM ${schema}.${tableName};`);
+            monacoEditor.focus();
+            updateStatus('View template generated — edit and execute');
+        }
+    };
+    menu.querySelector('[data-action="show-triggers"]').onclick = async () => {
+        menu.remove();
+        await showTableTriggers(connId, schema, tableName);
+    };
+    menu.querySelector('[data-action="ai-explain-table"]').onclick = async () => {
+        menu.remove();
+        await aiExplainTable(connId, schema, tableName);
+    };
+
+    const close = () => { menu.remove(); document.removeEventListener('click', close); };
+    setTimeout(() => document.addEventListener('click', close), 0);
+}
+
+async function showTableForeignKeys(connId, schema, tableName) {
+    try {
+        // Use a simple query to get FK info — or reuse metadata
+        const sql = `-- Foreign Keys on ${schema}.${tableName}\n-- (Query INFORMATION_SCHEMA for your database)\nSELECT * FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA='${schema}' AND TABLE_NAME='${tableName}' AND REFERENCED_TABLE_NAME IS NOT NULL;`;
+        if (monacoEditor) { monacoEditor.setValue(sql); monacoEditor.focus(); }
+        updateStatus('FK query loaded — execute to see results');
+    } catch (e) { updateStatus('Failed: ' + e.message, true); }
+}
+
+async function showTableTriggers(connId, schema, tableName) {
+    try {
+        const sql = `-- Triggers on ${schema}.${tableName}\nSELECT TRIGGER_NAME, EVENT_MANIPULATION, ACTION_TIMING, ACTION_STATEMENT\nFROM information_schema.TRIGGERS\nWHERE EVENT_OBJECT_SCHEMA='${schema}' AND EVENT_OBJECT_TABLE='${tableName}';`;
+        if (monacoEditor) { monacoEditor.setValue(sql); monacoEditor.focus(); }
+        updateStatus('Trigger query loaded — execute to see results');
+    } catch (e) { updateStatus('Failed: ' + e.message, true); }
+}
+
+async function aiExplainTable(connId, schema, tableName) {
+    toggleAiChatPanel();
+    appendChatMessage('user', `Explain the purpose and structure of table "${schema}.${tableName}"`);
+    const loadingMsg = appendChatMessage('loading', '');
+    try {
+        const result = await api.llm.chat(connId, `Explain the table "${schema}.${tableName}": what it likely stores, its columns, relationships, and typical use cases.`);
+        loadingMsg.remove();
+        if (result.error) appendChatMessage('error', result.message);
+        else appendChatMessage('assistant', result.message, result.sql);
+    } catch (e) { loadingMsg.remove(); appendChatMessage('error', e.message); }
+}
+
+async function showTableDdl(connId, schema, tableName) {
+    try {
+        const result = await api.metadata.ddl(connId, schema, tableName);
+        if (monacoEditor) {
+            monacoEditor.setValue(result.ddl || '-- No DDL available');
+            monacoEditor.focus();
+            updateStatus(`DDL loaded for ${tableName}`);
+        }
+    } catch (e) {
+        updateStatus('Failed to load DDL: ' + e.message, true);
+    }
+}
+
+async function showTableIndexes(connId, schema, tableName) {
+    try {
+        const indexes = await api.metadata.indexes(connId, schema, tableName);
+        if (indexes.length === 0) {
+            updateStatus(`No indexes found on ${tableName}`);
+            return;
+        }
+        // Display as a formatted list in the editor
+        let sql = `-- Indexes on ${schema}.${tableName}\n\n`;
+        const grouped = {};
+        indexes.forEach(idx => {
+            if (!grouped[idx.name]) grouped[idx.name] = { unique: idx.unique, columns: [] };
+            grouped[idx.name].columns.push(idx.columnName);
+        });
+        for (const [name, info] of Object.entries(grouped)) {
+            sql += `-- ${info.unique ? 'UNIQUE ' : ''}INDEX: ${name} (${info.columns.join(', ')})\n`;
+        }
+        if (monacoEditor) {
+            monacoEditor.setValue(sql);
+            monacoEditor.focus();
+        }
+    } catch (e) {
+        updateStatus('Failed to load indexes: ' + e.message, true);
+    }
+}
+
 // ============================================================
 // Query Execution
 // ============================================================
@@ -905,13 +1435,97 @@ async function executeQuery() {
         return;
     }
 
+    const executionId = 'exec-' + Date.now();
+    state.currentExecutionId = executionId;
+
     updateStatus('Executing...');
+    document.getElementById('btn-run').disabled = true;
+    showCancelButton(true, executionId);
+
+    try {
+        const results = await api.query.execute(state.activeConnectionId, sql, 1000, executionId);
+        state.lastResult = { connectionId: state.activeConnectionId, sql };
+        // Multi-query: results is an array
+        if (Array.isArray(results) && results.length > 1) {
+            displayMultiResult(results);
+        } else {
+            const result = Array.isArray(results) ? results[0] : results;
+            displayResult(result);
+        }
+    } catch (e) {
+        displayError(e.message);
+    } finally {
+        state.currentExecutionId = null;
+        document.getElementById('btn-run').disabled = false;
+        showCancelButton(false);
+    }
+}
+
+function showCancelButton(show, executionId) {
+    let cancelBtn = document.getElementById('btn-cancel-query');
+    if (show) {
+        if (!cancelBtn) {
+            cancelBtn = document.createElement('button');
+            cancelBtn.id = 'btn-cancel-query';
+            cancelBtn.className = 'btn btn-ghost btn-cancel-query';
+            cancelBtn.title = 'Cancel Query';
+            cancelBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg> Cancel`;
+            const runBtn = document.getElementById('btn-run');
+            runBtn.parentElement.insertBefore(cancelBtn, runBtn.nextSibling);
+        }
+        cancelBtn.style.display = '';
+        cancelBtn.disabled = false;
+        cancelBtn.onclick = () => cancelQuery(executionId);
+    } else {
+        if (cancelBtn) cancelBtn.style.display = 'none';
+    }
+}
+
+async function cancelQuery(executionId) {
+    try {
+        const cancelBtn = document.getElementById('btn-cancel-query');
+        if (cancelBtn) cancelBtn.disabled = true;
+        await api.query.cancel(executionId);
+        updateStatus('Query cancellation requested...');
+    } catch (e) {
+        console.error('Cancel failed:', e);
+    }
+}
+
+function formatSql() {
+    if (!monacoEditor) return;
+    const sql = monacoEditor.getValue();
+    if (!sql.trim()) return;
+    try {
+        const formatted = window.sqlFormatter
+            ? sqlFormatter.format(sql, { language: 'sql', tabWidth: 2 })
+            : sql;
+        monacoEditor.setValue(formatted);
+        updateStatus('SQL formatted');
+    } catch (e) {
+        updateStatus('Format failed: ' + e.message, true);
+    }
+}
+
+async function executeExplain(analyze = false) {
+    if (!state.activeConnectionId) {
+        updateStatus('No active connection. Double-click a connection in the tree.', true);
+        return;
+    }
+    const sql = getCurrentSql();
+    if (!sql.trim()) {
+        updateStatus('No SQL to execute', true);
+        return;
+    }
+
+    const label = analyze ? 'EXPLAIN ANALYZE' : 'EXPLAIN';
+    updateStatus(`Running ${label}...`);
     document.getElementById('btn-run').disabled = true;
 
     try {
-        const result = await api.query.execute(state.activeConnectionId, sql);
-        state.lastResult = { connectionId: state.activeConnectionId, sql };
-        displayResult(result);
+        const result = await api.query.explain(state.activeConnectionId, sql, analyze);
+        state.lastResult = { connectionId: state.activeConnectionId, sql, explain: true };
+        displayResult(result, label);
     } catch (e) {
         displayError(e.message);
     } finally {
@@ -922,13 +1536,25 @@ async function executeQuery() {
 // ============================================================
 // Results Display
 // ============================================================
-function displayResult(result) {
+function displayResult(result, resultLabel) {
     const container = document.getElementById('result-content');
 
     if (result.error) {
-        container.innerHTML = `<div class="result-error">${escapeHtml(result.errorMessage)}</div>`;
+        const sql = state.lastResult?.sql || getCurrentSql();
+        container.innerHTML = `<div class="result-error">
+            <div class="result-error-msg">${escapeHtml(result.errorMessage)}</div>
+            ${state.activeConnectionId ? `<button class="btn btn-ghost btn-sm ai-fix-btn">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 2.8 4 6 4 6s4-3.2 4-6a4 4 0 0 0-4-4z"/><circle cx="12" cy="6" r="1.5"/></svg>
+                Ask AI to Fix
+            </button>` : ''}
+            <div id="ai-fix-result" style="display:none;"></div>
+        </div>`;
+        // Safe event binding (no inline onclick)
+        const fixBtn = container.querySelector('.ai-fix-btn');
+        if (fixBtn) fixBtn.addEventListener('click', () => askAiToFix(result.errorMessage));
         updateStatus(result.errorMessage, true);
         state.resultData = null;
+        state.lastError = { sql, errorMessage: result.errorMessage };
         return;
     }
 
@@ -942,11 +1568,15 @@ function displayResult(result) {
     // Store original data for sorting/filtering
     state.resultData = {
         columnNames: result.columnNames,
+        columnTypeNames: result.columnTypeNames || [],
         rows: result.rows.map(r => [...r]), // deep copy
         executionTimeMs: result.executionTimeMs,
+        tableName: result.tableName || null,
+        schemaName: result.schemaName || null,
     };
     state.sortState = { columnIndex: -1, direction: null };
     state.filterKeyword = '';
+    state.primaryKeyCache = null; // reset PK cache for new result
 
     // Show filter bar & reset input
     const filterWrap = document.getElementById('result-filter-wrap');
@@ -954,10 +1584,67 @@ function displayResult(result) {
     if (filterWrap) filterWrap.style.display = '';
     if (filterInput) filterInput.value = '';
 
+    // Update result header label
+    const headerLabel = document.querySelector('#result-header > span:first-of-type');
+    if (headerLabel) {
+        headerLabel.textContent = resultLabel || 'Results';
+    }
+
     applyFilterAndSort();
 
     const conn = state.connections.find(c => c.id === state.activeConnectionId);
     updateStatus(`Connected: ${conn ? conn.name : ''}`, false, result.rows.length, result.executionTimeMs);
+}
+
+function displayMultiResult(results) {
+    const container = document.getElementById('result-content');
+    const filterWrap = document.getElementById('result-filter-wrap');
+    if (filterWrap) filterWrap.style.display = 'none';
+    state.resultData = null;
+
+    // Build tab header + content for each result
+    let tabsHtml = '<div class="multi-result-tabs">';
+    results.forEach((r, i) => {
+        const label = r.select ? `Result ${i + 1}` : (r.error ? `Error ${i + 1}` : `Statement ${i + 1}`);
+        tabsHtml += `<button class="multi-tab${i === 0 ? ' active' : ''}" data-idx="${i}">${label}</button>`;
+    });
+    tabsHtml += '</div><div class="multi-result-content"></div>';
+    container.innerHTML = tabsHtml;
+
+    const contentDiv = container.querySelector('.multi-result-content');
+
+    function showMultiTab(idx) {
+        container.querySelectorAll('.multi-tab').forEach((t, i) => t.classList.toggle('active', i === idx));
+        const r = results[idx];
+        if (r.error) {
+            contentDiv.innerHTML = `<div class="result-error"><div class="result-error-msg">${escapeHtml(r.errorMessage)}</div></div>`;
+        } else if (!r.select) {
+            contentDiv.innerHTML = `<div class="result-message">${r.affectedRows} row(s) affected (${r.executionTimeMs}ms)</div>`;
+        } else {
+            // Render a simple table for this result
+            let html = '<table class="result-table"><thead><tr>';
+            r.columnNames.forEach(col => { html += `<th><span class="th-label">${escapeHtml(col)}</span></th>`; });
+            html += '</tr></thead><tbody>';
+            r.rows.forEach(row => {
+                html += '<tr>';
+                row.forEach(val => {
+                    html += val === null ? '<td class="null-value">NULL</td>' : `<td>${escapeHtml(String(val))}</td>`;
+                });
+                html += '</tr>';
+            });
+            html += '</tbody></table>';
+            contentDiv.innerHTML = html;
+        }
+    }
+
+    container.querySelectorAll('.multi-tab').forEach(tab => {
+        tab.onclick = () => showMultiTab(parseInt(tab.dataset.idx));
+    });
+
+    showMultiTab(0);
+
+    const totalTime = results.reduce((s, r) => s + (r.executionTimeMs || 0), 0);
+    updateStatus(`Executed ${results.length} statements in ${totalTime}ms`);
 }
 
 function applyFilterAndSort() {
@@ -992,36 +1679,122 @@ function applyFilterAndSort() {
     renderResultTable(rows, totalRows);
 }
 
+function formatCellValue(val, typeName) {
+    if (val === null) return { html: 'NULL', cls: 'null-value' };
+    const str = String(val);
+    const upper = (typeName || '').toUpperCase();
+
+    // Numeric types — right align, thousand separator
+    if (/^(INT|BIGINT|SMALLINT|TINYINT|MEDIUMINT|DECIMAL|NUMERIC|FLOAT|DOUBLE|REAL|NUMBER)/.test(upper)) {
+        const num = Number(val);
+        if (!isNaN(num) && isFinite(num)) {
+            const formatted = upper.includes('DECIMAL') || upper.includes('NUMERIC') || upper.includes('FLOAT') || upper.includes('DOUBLE') || upper.includes('REAL')
+                ? num.toLocaleString(undefined, { maximumFractionDigits: 10 })
+                : num.toLocaleString();
+            return { html: escapeHtml(formatted), cls: 'cell-number' };
+        }
+    }
+
+    // Boolean
+    if (/^(BOOL|BOOLEAN|BIT)/.test(upper)) {
+        const b = str === '1' || str.toLowerCase() === 'true';
+        return { html: `<span class="cell-bool cell-bool-${b}">${b ? 'true' : 'false'}</span>`, cls: '' };
+    }
+
+    // Date/Time
+    if (/^(DATE|TIME|DATETIME|TIMESTAMP)/.test(upper)) {
+        return { html: escapeHtml(str), cls: 'cell-date' };
+    }
+
+    // JSON
+    if (/^(JSON|JSONB)/.test(upper)) {
+        return { html: escapeHtml(str.length > 100 ? str.substring(0, 100) + '...' : str), cls: 'cell-json' };
+    }
+
+    // Binary
+    if (str === '[BINARY]') {
+        return { html: '<span class="cell-binary">[BINARY]</span>', cls: '' };
+    }
+
+    // Long text — truncate
+    if (str.length > 200) {
+        return { html: escapeHtml(str.substring(0, 200)) + '<span class="cell-truncated">...</span>', cls: '' };
+    }
+
+    return { html: escapeHtml(str), cls: '' };
+}
+
+const RENDER_PAGE_SIZE = 200;
+
 function renderResultTable(rows, totalRows) {
     const container = document.getElementById('result-content');
     const { columnNames } = state.resultData;
     const { columnIndex: sortCol, direction: sortDir } = state.sortState;
     const keyword = state.filterKeyword.toLowerCase();
 
+    // For large results, render in pages
+    const visibleRows = rows.length > RENDER_PAGE_SIZE ? rows.slice(0, RENDER_PAGE_SIZE) : rows;
+    state._allFilteredRows = rows;
+    state._renderedCount = visibleRows.length;
+
     let html = '<table class="result-table"><thead><tr>';
     columnNames.forEach((col, idx) => {
         const isActive = sortCol === idx;
         const arrow = isActive ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
         const cls = isActive ? ' class="th-sorted"' : '';
-        html += `<th${cls} data-col-idx="${idx}"><span class="th-label">${escapeHtml(col)}</span><span class="th-sort-arrow">${arrow}</span></th>`;
+        html += `<th${cls} data-col-idx="${idx}"><span class="th-label">${escapeHtml(col)}</span><span class="th-sort-arrow">${arrow}</span><div class="col-resize-handle"></div></th>`;
     });
     html += '</tr></thead><tbody>';
 
-    rows.forEach(row => {
-        html += '<tr>';
-        row.forEach(val => {
-            if (val === null) {
-                html += '<td class="null-value">NULL</td>';
+    const editable = state.resultData.tableName && !keyword;
+    const typeNames = state.resultData.columnTypeNames || [];
+    visibleRows.forEach((row, rowIdx) => {
+        html += `<tr data-row-idx="${rowIdx}">`;
+        row.forEach((val, colIdx) => {
+            const editAttr = editable ? ` data-col-idx="${colIdx}"` : '';
+            if (keyword) {
+                // In filter mode, use simple rendering with highlight
+                if (val === null) {
+                    html += `<td class="null-value"${editAttr}>NULL</td>`;
+                } else {
+                    html += `<td${editAttr}>${highlightMatch(String(val), keyword)}</td>`;
+                }
             } else {
-                const str = String(val);
-                html += `<td>${keyword ? highlightMatch(str, keyword) : escapeHtml(str)}</td>`;
+                const cell = formatCellValue(val, typeNames[colIdx]);
+                html += `<td class="${cell.cls}"${editAttr}>${cell.html}</td>`;
             }
         });
         html += '</tr>';
     });
 
     html += '</tbody></table>';
+    if (rows.length > visibleRows.length) {
+        const totalPages = Math.ceil(rows.length / RENDER_PAGE_SIZE);
+        const currentPage = Math.ceil(visibleRows.length / RENDER_PAGE_SIZE);
+        html += `<div class="load-more-bar">
+            <span class="page-info">Page ${currentPage} of ${totalPages} (${visibleRows.length} / ${rows.length} rows)</span>
+            <button class="btn btn-ghost btn-sm" id="btn-load-more">Load More</button>
+            <button class="btn btn-ghost btn-sm" id="btn-load-all">Load All</button>
+        </div>`;
+    }
     container.innerHTML = html;
+
+    // Load more / Load all buttons
+    const loadMoreBtn = document.getElementById('btn-load-more');
+    if (loadMoreBtn) {
+        loadMoreBtn.onclick = () => {
+            state._renderedCount = Math.min(state._renderedCount + RENDER_PAGE_SIZE, state._allFilteredRows.length);
+            const moreRows = state._allFilteredRows.slice(0, state._renderedCount);
+            renderResultTable(moreRows.length === state._allFilteredRows.length ? state._allFilteredRows : moreRows, totalRows);
+        };
+    }
+    const loadAllBtn = document.getElementById('btn-load-all');
+    if (loadAllBtn) {
+        loadAllBtn.onclick = () => {
+            state._renderedCount = state._allFilteredRows.length;
+            renderResultTable(state._allFilteredRows, totalRows);
+        };
+    }
 
     // Attach sort click handlers
     container.querySelectorAll('.result-table th').forEach(th => {
@@ -1031,14 +1804,112 @@ function renderResultTable(rows, totalRows) {
         };
     });
 
+    // Right-click copy menu on cells
+    container.querySelectorAll('.result-table tbody td').forEach(td => {
+        td.oncontextmenu = (e) => {
+            e.preventDefault();
+            const rowIdx = parseInt(td.parentElement.dataset.rowIdx);
+            const colIdx = Array.from(td.parentElement.children).indexOf(td);
+            let existing = document.getElementById('table-ctx-menu');
+            if (existing) existing.remove();
+            const menu = document.createElement('div');
+            menu.id = 'table-ctx-menu';
+            menu.className = 'context-menu';
+            menu.style.cssText = `display:block;left:${e.clientX}px;top:${e.clientY}px`;
+            menu.innerHTML = `
+                <div class="ctx-item" data-action="copy-cell">Copy Cell</div>
+                <div class="ctx-item" data-action="copy-row">Copy Row (TSV)</div>
+                <div class="ctx-item" data-action="copy-all">Copy All (TSV)</div>
+            `;
+            document.body.appendChild(menu);
+
+            menu.querySelector('[data-action="copy-cell"]').onclick = () => {
+                const val = state.resultData.rows[rowIdx]?.[colIdx];
+                navigator.clipboard.writeText(val === null ? 'NULL' : String(val));
+                updateStatus('Cell copied'); menu.remove();
+            };
+            menu.querySelector('[data-action="copy-row"]').onclick = () => {
+                const row = state.resultData.rows[rowIdx];
+                if (row) navigator.clipboard.writeText(row.map(v => v === null ? 'NULL' : String(v)).join('\t'));
+                updateStatus('Row copied'); menu.remove();
+            };
+            menu.querySelector('[data-action="copy-all"]').onclick = () => {
+                const { columnNames: cols, rows: allRows } = state.resultData;
+                const tsv = cols.join('\t') + '\n' + allRows.map(r => r.map(v => v === null ? 'NULL' : String(v)).join('\t')).join('\n');
+                navigator.clipboard.writeText(tsv);
+                updateStatus(`Copied ${allRows.length} rows`); menu.remove();
+            };
+            setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 0);
+        };
+    });
+
+    // Row selection for delete
+    container.querySelectorAll('.result-table tbody tr').forEach(tr => {
+        tr.onclick = () => {
+            container.querySelectorAll('.result-table tbody tr.row-selected').forEach(r => r.classList.remove('row-selected'));
+            tr.classList.add('row-selected');
+        };
+    });
+
+    // Attach cell click for full value viewer
+    container.querySelectorAll('.result-table tbody td').forEach(td => {
+        td.onclick = (e) => {
+            if (td.classList.contains('cell-editing')) return; // skip if editing
+            if (e.detail === 2) return; // skip double-click (editing)
+            const rowIdx = parseInt(td.parentElement.dataset.rowIdx);
+            const colIdx = Array.from(td.parentElement.children).indexOf(td);
+            if (isNaN(rowIdx) || colIdx < 0) return;
+            const val = state.resultData.rows[rowIdx]?.[colIdx];
+            const colName = columnNames[colIdx] || '';
+            const typeName = typeNames[colIdx] || '';
+            // Only show viewer for long text, JSON, or NULL
+            const str = val === null ? null : String(val);
+            if (val === null || (str && str.length > 50) || /JSON/i.test(typeName)) {
+                showCellViewer(val, colName, typeName);
+            }
+        };
+    });
+
+    // Attach column resize handlers
+    container.querySelectorAll('.col-resize-handle').forEach(handle => {
+        handle.onmousedown = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const th = handle.parentElement;
+            const table = th.closest('table');
+            table.style.tableLayout = 'fixed';
+            const startX = e.clientX;
+            const startW = th.offsetWidth;
+            const onMove = (me) => {
+                th.style.width = Math.max(40, startW + me.clientX - startX) + 'px';
+            };
+            const onUp = () => {
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+            };
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        };
+    });
+
+    // Attach inline editing (double-click) if editable
+    if (editable) {
+        container.querySelectorAll('.result-table tbody td[data-col-idx]').forEach(td => {
+            td.ondblclick = () => startCellEdit(td);
+        });
+    }
+
     // Update summary with filter info
     const summary = document.getElementById('result-summary');
     if (summary && totalRows !== undefined) {
         const timeMs = state.resultData.executionTimeMs;
         if (keyword && rows.length !== totalRows) {
-            summary.textContent = `${rows.length} / ${totalRows} rows in ${timeMs}ms`;
+            summary.innerHTML = `${rows.length} / ${totalRows} rows in ${timeMs}ms`;
         } else {
-            summary.textContent = `${rows.length} rows in ${timeMs}ms`;
+            summary.innerHTML = `${rows.length} rows in ${timeMs}ms`;
+        }
+        if (editable) {
+            summary.innerHTML += ` | <span class="edit-actions"><button class="btn-link" onclick="addNewRow()">+ Add Row</button> <button class="btn-link btn-link-danger" onclick="deleteSelectedRow()">- Delete Row</button></span>`;
         }
     }
 }
@@ -1070,9 +1941,277 @@ function sortResultByColumn(colIndex) {
     applyFilterAndSort();
 }
 
+// ============================================================
+// Inline Cell Editing
+// ============================================================
+function startCellEdit(td) {
+    if (td.querySelector('input')) return; // already editing
+
+    const colIdx = parseInt(td.dataset.colIdx);
+    const row = td.parentElement;
+    const rowIdx = parseInt(row.dataset.rowIdx);
+    const isNull = td.classList.contains('null-value');
+    const originalValue = isNull ? null : td.textContent;
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'cell-edit-input';
+    input.value = isNull ? '' : originalValue;
+    input.placeholder = 'NULL';
+
+    td.textContent = '';
+    td.classList.add('cell-editing');
+    td.appendChild(input);
+    input.focus();
+    input.select();
+
+    const commitEdit = async () => {
+        const newValue = input.value;
+        const newIsNull = newValue === '' || newValue.toLowerCase() === 'null';
+        const displayVal = newIsNull ? null : newValue;
+
+        // Check if value actually changed
+        if ((!newIsNull && newValue === originalValue) || (newIsNull && isNull)) {
+            cancelEdit();
+            return;
+        }
+
+        // #25: Preview the SQL before executing
+        const previewSql = buildUpdatePreviewSql(rowIdx, colIdx, displayVal);
+        if (previewSql && !confirm(`Execute this SQL?\n\n${previewSql}`)) {
+            cancelEdit();
+            return;
+        }
+
+        td.classList.remove('cell-editing');
+        td.textContent = newIsNull ? 'NULL' : newValue;
+        if (newIsNull) td.classList.add('null-value');
+        else td.classList.remove('null-value');
+        td.classList.add('cell-dirty');
+
+        // Perform the update
+        try {
+            const result = await performCellUpdate(rowIdx, colIdx, displayVal);
+            if (result && result.error) {
+                td.classList.remove('cell-dirty');
+                td.classList.add('cell-error');
+                td.title = result.errorMessage;
+                updateStatus(`Update failed: ${result.errorMessage}`, true);
+                // Revert display
+                setTimeout(() => {
+                    td.textContent = isNull ? 'NULL' : originalValue;
+                    if (isNull) td.classList.add('null-value');
+                    td.classList.remove('cell-error');
+                    td.title = '';
+                }, 2000);
+            } else {
+                td.classList.add('cell-saved');
+                td.title = '';
+                // Update the stored data
+                state.resultData.rows[rowIdx][colIdx] = displayVal;
+                updateStatus('Cell updated successfully');
+                setTimeout(() => {
+                    td.classList.remove('cell-dirty', 'cell-saved');
+                }, 1500);
+            }
+        } catch (e) {
+            td.classList.add('cell-error');
+            td.title = e.message;
+            updateStatus(`Update failed: ${e.message}`, true);
+            setTimeout(() => {
+                td.textContent = isNull ? 'NULL' : originalValue;
+                if (isNull) td.classList.add('null-value');
+                td.classList.remove('cell-dirty', 'cell-error');
+                td.title = '';
+            }, 2000);
+        }
+    };
+
+    const cancelEdit = () => {
+        td.classList.remove('cell-editing');
+        td.textContent = isNull ? 'NULL' : originalValue;
+        if (isNull) td.classList.add('null-value');
+    };
+
+    input.onblur = () => commitEdit();
+    input.onkeydown = (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+        if (e.key === 'Escape') { e.preventDefault(); input.onblur = null; cancelEdit(); }
+        e.stopPropagation(); // prevent Monaco shortcuts
+    };
+}
+
+function buildUpdatePreviewSql(rowIdx, colIdx, newValue) {
+    const { tableName, schemaName, columnNames } = state.resultData;
+    if (!tableName || !state.primaryKeyCache) return null;
+    const row = state.resultData.rows[rowIdx];
+    const col = columnNames[colIdx];
+    const valStr = newValue === null ? 'NULL' : `'${newValue}'`;
+    const wheres = state.primaryKeyCache.map(pk => {
+        const pkIdx = columnNames.indexOf(pk);
+        const pkVal = row[pkIdx];
+        return `${pk} = ${pkVal === null ? 'NULL' : `'${pkVal}'`}`;
+    }).join(' AND ');
+    const table = schemaName ? `${schemaName}.${tableName}` : tableName;
+    return `UPDATE ${table} SET ${col} = ${valStr} WHERE ${wheres}`;
+}
+
+async function performCellUpdate(rowIdx, colIdx, newValue) {
+    const { tableName, schemaName, columnNames } = state.resultData;
+    if (!tableName) throw new Error('Table name not available');
+
+    // Get primary keys (cached)
+    if (!state.primaryKeyCache) {
+        const pks = await api.metadata.primaryKeys(state.activeConnectionId, schemaName, tableName);
+        if (!pks || pks.length === 0) throw new Error('No primary key found for table ' + tableName);
+        state.primaryKeyCache = pks.map(pk => pk.columnName);
+    }
+
+    const pkColumns = state.primaryKeyCache;
+    const row = state.resultData.rows[rowIdx];
+
+    // Build primary key map
+    const primaryKeys = {};
+    for (const pkCol of pkColumns) {
+        const pkIdx = columnNames.indexOf(pkCol);
+        if (pkIdx === -1) throw new Error(`Primary key column "${pkCol}" not in result set. Include all PK columns in your SELECT.`);
+        primaryKeys[pkCol] = row[pkIdx];
+    }
+
+    const column = columnNames[colIdx];
+    return await api.query.updateCell(state.activeConnectionId, schemaName, tableName, primaryKeys, column, newValue);
+}
+
+async function addNewRow() {
+    if (!state.resultData?.tableName) return;
+    const { columnNames, schemaName, tableName } = state.resultData;
+    const values = {};
+    for (const col of columnNames) {
+        const val = prompt(`Value for "${col}" (leave empty for NULL):`);
+        if (val === null) return; // cancelled
+        values[col] = val === '' ? null : val;
+    }
+    try {
+        const result = await api.query.insertRow(state.activeConnectionId, schemaName, tableName, values);
+        if (result.error) {
+            updateStatus('Insert failed: ' + result.errorMessage, true);
+        } else {
+            updateStatus('Row inserted. Re-executing query...');
+            executeQuery(); // refresh
+        }
+    } catch (e) { updateStatus('Insert failed: ' + e.message, true); }
+}
+
+async function deleteSelectedRow() {
+    if (!state.resultData?.tableName) return;
+    const { schemaName, tableName, columnNames } = state.resultData;
+
+    // Find selected row (last clicked)
+    const activeRow = document.querySelector('.result-table tbody tr.row-selected');
+    if (!activeRow) { updateStatus('Click a row first to select it for deletion', true); return; }
+    if (!confirm('Delete the selected row?')) return;
+
+    const rowIdx = parseInt(activeRow.dataset.rowIdx);
+    const row = state.resultData.rows[rowIdx];
+    if (!row) return;
+
+    // Get PKs
+    if (!state.primaryKeyCache) {
+        const pks = await api.metadata.primaryKeys(state.activeConnectionId, schemaName, tableName);
+        if (!pks || pks.length === 0) { updateStatus('No primary key found', true); return; }
+        state.primaryKeyCache = pks.map(pk => pk.columnName);
+    }
+    const primaryKeys = {};
+    for (const pkCol of state.primaryKeyCache) {
+        const pkIdx = columnNames.indexOf(pkCol);
+        if (pkIdx === -1) { updateStatus(`PK column "${pkCol}" not in result`, true); return; }
+        primaryKeys[pkCol] = row[pkIdx];
+    }
+
+    try {
+        const result = await api.query.deleteRow(state.activeConnectionId, schemaName, tableName, primaryKeys);
+        if (result.error) {
+            updateStatus('Delete failed: ' + result.errorMessage, true);
+        } else {
+            updateStatus('Row deleted. Re-executing query...');
+            executeQuery();
+        }
+    } catch (e) { updateStatus('Delete failed: ' + e.message, true); }
+}
+
+async function askAiToFix(errorMsg) {
+    const resultDiv = document.getElementById('ai-fix-result');
+    if (!resultDiv) return;
+
+    const sql = state.lastError?.sql || getCurrentSql();
+    const error = state.lastError?.errorMessage || errorMsg;
+
+    // Hide the button, show loading
+    const fixBtn = document.querySelector('.ai-fix-btn');
+    if (fixBtn) fixBtn.style.display = 'none';
+
+    resultDiv.style.display = 'block';
+    resultDiv.className = 'ai-fix-result ai-fix-loading';
+    resultDiv.innerHTML = '<span class="ai-loading-dots">AI is analyzing<span>...</span></span>';
+
+    try {
+        const result = await api.llm.fixSql(state.activeConnectionId, sql, error);
+
+        if (result.error) {
+            resultDiv.className = 'ai-fix-result ai-fix-error';
+            resultDiv.innerHTML = `<div class="ai-fix-msg">${escapeHtml(result.message)}</div>`;
+        } else {
+            let html = `<div class="ai-fix-msg">${formatAiMessage(result.message)}</div>`;
+            if (result.sql) {
+                html += `<div class="ai-fix-sql">
+                    <div class="ai-sql-header">
+                        <span>Suggested Fix</span>
+                        <button class="btn btn-primary btn-xs" id="btn-apply-fix">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                            Apply
+                        </button>
+                    </div>
+                    <pre class="ai-sql-code">${escapeHtml(result.sql)}</pre>
+                </div>`;
+            }
+            resultDiv.className = 'ai-fix-result ai-fix-success';
+            resultDiv.innerHTML = html;
+
+            // Attach apply button handler
+            if (result.sql) {
+                const applyBtn = document.getElementById('btn-apply-fix');
+                if (applyBtn) {
+                    applyBtn.onclick = () => {
+                        if (monacoEditor) {
+                            monacoEditor.setValue(result.sql);
+                            monacoEditor.focus();
+                            updateStatus('Fixed SQL applied to editor');
+                        }
+                    };
+                }
+            }
+        }
+    } catch (e) {
+        resultDiv.className = 'ai-fix-result ai-fix-error';
+        resultDiv.innerHTML = `<div class="ai-fix-msg">AI analysis failed: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
 function displayError(msg) {
-    document.getElementById('result-content').innerHTML = `<div class="result-error">${escapeHtml(msg)}</div>`;
+    const container = document.getElementById('result-content');
+    const sql = getCurrentSql();
+    container.innerHTML = `<div class="result-error">
+        <div class="result-error-msg">${escapeHtml(msg)}</div>
+        ${state.activeConnectionId ? `<button class="btn btn-ghost btn-sm ai-fix-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 2.8 4 6 4 6s4-3.2 4-6a4 4 0 0 0-4-4z"/><circle cx="12" cy="6" r="1.5"/></svg>
+            Ask AI to Fix
+        </button>` : ''}
+        <div id="ai-fix-result" style="display:none;"></div>
+    </div>`;
+    const fixBtn = container.querySelector('.ai-fix-btn');
+    if (fixBtn) fixBtn.addEventListener('click', () => askAiToFix(msg));
     updateStatus(msg, true);
+    state.lastError = { sql, errorMessage: msg };
 }
 
 // ============================================================
@@ -1083,6 +2222,8 @@ function showConnectionDialog(existing) {
     document.getElementById('conn-dialog-title').textContent = existing ? 'Edit Connection' : 'New Connection';
 
     document.getElementById('conn-name').value = existing ? existing.name : '';
+    document.getElementById('conn-group').value = existing?.properties?.group || '';
+    document.getElementById('conn-color').value = existing?.properties?.color || '';
     document.getElementById('conn-type').value = existing ? existing.databaseType : 'MYSQL';
     document.getElementById('conn-host').value = existing ? (existing.host || 'localhost') : 'localhost';
     document.getElementById('conn-port').value = existing ? existing.port : DEFAULT_PORTS['MYSQL'];
@@ -1146,6 +2287,12 @@ function buildConnectionInfo() {
         password: document.getElementById('conn-password').value,
         properties: {}
     };
+    // Group & Color
+    const group = document.getElementById('conn-group').value.trim();
+    if (group) info.properties.group = group;
+    const color = document.getElementById('conn-color').value;
+    if (color) info.properties.color = color;
+
     if (type === 'ATHENA') {
         info.properties.region = document.getElementById('conn-region').value;
         info.properties.s3Output = document.getElementById('conn-s3output').value;
@@ -1233,6 +2380,13 @@ async function handleContextAction(action) {
         case 'edit':
             showConnectionDialog(contextConn);
             break;
+        case 'clone':
+            const cloned = { ...contextConn, name: contextConn.name + ' (Copy)', properties: { ...contextConn.properties } };
+            delete cloned.id;
+            await api.connections.create(cloned);
+            await loadConnections();
+            updateStatus(`Cloned: ${cloned.name}`);
+            break;
         case 'delete':
             if (confirm(`Delete connection "${contextConn.name}"?`)) {
                 await api.connections.delete(contextConn.id);
@@ -1249,18 +2403,34 @@ async function handleContextAction(action) {
 // ============================================================
 // Export
 // ============================================================
-async function exportCsv() {
+async function exportData(format) {
     if (!state.activeConnectionId || !state.lastResult) {
         updateStatus('No query result to export', true);
         return;
     }
     try {
-        await api.export.csv(state.lastResult.connectionId, state.lastResult.sql);
-        updateStatus('Exported successfully');
+        const { connectionId, sql } = state.lastResult;
+        if (format === 'insert') {
+            const tableName = state.resultData?.tableName || prompt('Table name for INSERT statements:', 'my_table');
+            if (!tableName) return;
+            await api.export.insert(connectionId, sql, tableName);
+        } else if (format === 'json') {
+            await api.export.json(connectionId, sql);
+        } else if (format === 'xlsx') {
+            await api.export.xlsx(connectionId, sql);
+        } else if (format === 'xml') {
+            await api.export.xml(connectionId, sql);
+        } else {
+            await api.export.csv(connectionId, sql);
+        }
+        updateStatus(`Exported as ${format.toUpperCase()}`);
     } catch (e) {
         updateStatus('Export failed: ' + e.message, true);
     }
 }
+
+// backward compat alias
+async function exportCsv() { return exportData('csv'); }
 
 // ============================================================
 // Resizers
@@ -1380,9 +2550,459 @@ async function loadConnections() {
             api.tunnels.list()
         ]);
         renderTree();
+        // Check for connections that need password re-entry
+        checkPasswordReentry();
     } catch (e) {
         console.error('Failed to load connections:', e);
     }
+}
+
+async function checkPasswordReentry() {
+    try {
+        const result = await api.request('GET', '/api/connections/password-reentry-required');
+        if (result.required && result.connectionIds.length > 0) {
+            const names = result.connectionIds.map(id => {
+                const conn = state.connections.find(c => c.id === id);
+                return conn ? conn.name : id;
+            });
+            showPasswordReentryNotification(names, result.connectionIds);
+        }
+    } catch (e) {
+        console.error('Failed to check password re-entry status:', e);
+    }
+}
+
+function showPasswordReentryNotification(names, ids) {
+    // Remove existing notification if any
+    const existing = document.getElementById('password-reentry-banner');
+    if (existing) existing.remove();
+
+    const banner = document.createElement('div');
+    banner.id = 'password-reentry-banner';
+    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:10000;background:#e74c3c;color:#fff;padding:10px 20px;display:flex;align-items:center;gap:12px;font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
+    banner.innerHTML = `
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 9v4m0 4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/>
+        </svg>
+        <span style="flex:1">
+            <strong>Password re-entry required:</strong>
+            The encryption key has changed. Please re-enter passwords for:
+            <strong>${escapeHtml(names.join(', '))}</strong>
+        </span>
+        <button onclick="passwordReentryEditFirst('${escapeHtml(ids[0])}')" style="background:#fff;color:#e74c3c;border:none;padding:5px 14px;border-radius:4px;cursor:pointer;font-weight:600;font-size:12px;">
+            Edit Connection
+        </button>
+        <button onclick="this.parentElement.remove()" style="background:transparent;color:#fff;border:1px solid rgba(255,255,255,0.5);padding:5px 10px;border-radius:4px;cursor:pointer;font-size:12px;">
+            Dismiss
+        </button>
+    `;
+    document.body.prepend(banner);
+}
+
+function passwordReentryEditFirst(connId) {
+    const conn = state.connections.find(c => c.id === connId);
+    if (conn) {
+        showConnectionDialog(conn);
+        // Remove the banner
+        const banner = document.getElementById('password-reentry-banner');
+        if (banner) banner.remove();
+    }
+}
+
+// ============================================================
+// ERD Tab (React Flow via /js/erd-react.js bridge)
+// ============================================================
+// All heavy-lifting is in erd-react.js (loaded as ES module). This file
+// just wires the vanilla toolbar/tab UI to the React Flow instance via
+// the `window.erdReact` bridge object.
+
+async function initErdTab(tab) {
+    const canvas = document.getElementById('erd-canvas');
+    showErdStatus('Loading schema metadata...');
+    let graph;
+    try {
+        graph = await api.metadata.erGraph(tab.connId, tab.schema);
+    } catch (e) {
+        canvas.innerHTML = `<div style="padding:20px;color:var(--error)">Failed to load ERD: ${escapeHtml(e.message)}</div>`;
+        hideErdStatus();
+        return;
+    }
+
+    // Restore options
+    const savedOpts = JSON.parse(localStorage.getItem('dbee-erd-options') || '{}');
+    tab.options = Object.assign({
+        layout: 'force',
+        edgeStyle: 'bezier',
+        hideColumns: false,
+        hideTypes: false,
+        pkFkOnly: false,
+        focusMode: false,
+        minimap: false,
+    }, savedOpts);
+    tab.graph = graph;
+
+    // Load saved positions
+    let savedLayout = null;
+    try { savedLayout = await api.erdLayout.get(tab.connId, tab.schema); } catch (e) {}
+
+    // Wait for erdReact module to finish loading
+    if (!window.erdReact) {
+        await new Promise(r => {
+            const iv = setInterval(() => { if (window.erdReact) { clearInterval(iv); r(); } }, 50);
+        });
+    }
+
+    // Clear canvas and mount React Flow
+    canvas.innerHTML = '';
+    await window.erdReact.mount(canvas, {
+        graph,
+        savedLayout,
+        options: tab.options,
+        onPositionsChange: (layout) => {
+            // Persist to server
+            api.erdLayout.save(tab.connId, tab.schema, {
+                version: 1,
+                zoom: layout.zoom,
+                pan: layout.viewport ? { x: layout.viewport.x, y: layout.viewport.y } : { x: 0, y: 0 },
+                positions: layout.positions,
+            }).then(() => showErdStatus('Layout saved', 1500))
+              .catch(() => {});
+        },
+        onTableDoubleClick: (tableName) => {
+            const sql = `SELECT * FROM ${tab.schema ? tab.schema + '.' : ''}${tableName} LIMIT 100;`;
+            addEditorTab();
+            const newTab = state.editors[state.editors.length - 1];
+            if (newTab && newTab.model) newTab.model.setValue(sql);
+        },
+    });
+
+    // Sync toolbar state with stored options
+    const layoutSel = document.getElementById('erd-layout-select');
+    if (layoutSel) layoutSel.value = tab.options.layout || 'force';
+    const edgeSel = document.getElementById('erd-edge-style');
+    if (edgeSel) edgeSel.value = tab.options.edgeStyle || 'bezier';
+    ['hide-cols','hide-types','pkfk','focus','minimap'].forEach(k => {
+        const map = {'hide-cols':'hideColumns','hide-types':'hideTypes','pkfk':'pkFkOnly','focus':'focusMode','minimap':'minimap'};
+        const el = document.getElementById('erd-opt-' + k);
+        if (el) el.checked = !!tab.options[map[k]];
+    });
+    updateErdZoomLabel(tab);
+    wireErdToolbar();
+
+    hideErdStatus();
+}
+
+function saveErdOptions(tab) {
+    try { localStorage.setItem('dbee-erd-options', JSON.stringify(tab.options)); } catch (e) {}
+}
+
+function getActiveErdTab() {
+    const tab = state.editors.find(t => t.id === state.activeEditorId);
+    return tab && tab.type === 'erd' ? tab : null;
+}
+
+function showErdStatus(msg, autoHideMs = 0) {
+    const el = document.getElementById('erd-status');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.add('visible');
+    if (autoHideMs > 0) setTimeout(() => el.classList.remove('visible'), autoHideMs);
+}
+function hideErdStatus() {
+    const el = document.getElementById('erd-status');
+    if (el) el.classList.remove('visible');
+}
+
+async function updateErdZoomLabel(tab) {
+    const el = document.getElementById('erd-zoom-label');
+    if (!el) return;
+    try {
+        const z = await window.erdReact.getZoom();
+        el.textContent = Math.round(z * 100) + '%';
+    } catch (e) {}
+}
+
+// Toolbar wiring — runs once, reads the active ERD tab at invocation time.
+let _erdToolbarWired = false;
+function wireErdToolbar() {
+    if (_erdToolbarWired) return;
+    _erdToolbarWired = true;
+
+    document.getElementById('erd-layout-select').addEventListener('change', async (e) => {
+        const tab = getActiveErdTab();
+        if (!tab) return;
+        tab.options.layout = e.target.value;
+        saveErdOptions(tab);
+        await window.erdReact.runLayout(e.target.value);
+    });
+
+    document.getElementById('erd-btn-arrange').addEventListener('click', async () => {
+        const tab = getActiveErdTab();
+        if (!tab) return;
+        await window.erdReact.runLayout(tab.options.layout || 'dagre-lr');
+    });
+
+    const edgeStyleSel = document.getElementById('erd-edge-style');
+    if (edgeStyleSel) {
+        edgeStyleSel.addEventListener('change', async (e) => {
+            const tab = getActiveErdTab();
+            if (!tab) return;
+            tab.options.edgeStyle = e.target.value;
+            saveErdOptions(tab);
+            await window.erdReact.setOptions({ edgeStyle: e.target.value });
+        });
+    }
+
+    const bindOpt = (id, key) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('change', async (e) => {
+            const tab = getActiveErdTab();
+            if (!tab) return;
+            tab.options[key] = e.target.checked;
+            saveErdOptions(tab);
+            await window.erdReact.setOptions({ [key]: e.target.checked });
+        });
+    };
+    bindOpt('erd-opt-hide-cols', 'hideColumns');
+    bindOpt('erd-opt-hide-types', 'hideTypes');
+    bindOpt('erd-opt-pkfk', 'pkFkOnly');
+    bindOpt('erd-opt-focus', 'focusMode');
+    bindOpt('erd-opt-minimap', 'minimap');
+
+    // Search
+    const searchInput = document.getElementById('erd-search');
+    let searchDeb = null;
+    searchInput.addEventListener('input', (e) => {
+        clearTimeout(searchDeb);
+        searchDeb = setTimeout(async () => {
+            await window.erdReact.searchHighlight(e.target.value);
+        }, 200);
+    });
+
+    // Save / Reset / Export / Import
+    document.getElementById('erd-btn-save').addEventListener('click', async () => {
+        const tab = getActiveErdTab();
+        if (!tab) return;
+        const layout = await window.erdReact.getPositions();
+        if (!layout) return;
+        await api.erdLayout.save(tab.connId, tab.schema, {
+            version: 1, zoom: layout.zoom,
+            pan: layout.viewport ? { x: layout.viewport.x, y: layout.viewport.y } : { x: 0, y: 0 },
+            positions: layout.positions,
+        });
+        showErdStatus('Layout saved', 1500);
+    });
+
+    document.getElementById('erd-btn-reset').addEventListener('click', async () => {
+        const tab = getActiveErdTab();
+        if (!tab) return;
+        if (!confirm('Reset layout? Saved positions will be deleted and auto-layout re-run.')) return;
+        try {
+            await api.erdLayout.delete(tab.connId, tab.schema);
+            await window.erdReact.runLayout(tab.options.layout || 'dagre-lr');
+            showErdStatus('Layout reset', 1500);
+        } catch (e) { showErdStatus('Reset failed: ' + e.message, 2500); }
+    });
+
+    // Export menu
+    const exportBtn = document.getElementById('erd-btn-export');
+    const exportMenu = document.getElementById('erd-export-menu');
+    exportBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        exportMenu.style.display = exportMenu.style.display === 'none' ? 'block' : 'none';
+    });
+    document.addEventListener('click', () => { exportMenu.style.display = 'none'; });
+    exportMenu.querySelectorAll('div[data-fmt]').forEach(item => {
+        item.addEventListener('click', async () => {
+            exportMenu.style.display = 'none';
+            const fmt = item.dataset.fmt;
+            const tab = getActiveErdTab();
+            if (tab) await erdExport(tab, fmt);
+        });
+    });
+
+    // Import
+    document.getElementById('erd-btn-import').addEventListener('click', () => {
+        document.getElementById('erd-import-file').click();
+    });
+    document.getElementById('erd-import-file').addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        if (file.size > 1024 * 1024) { alert('File too large (>1MB)'); return; }
+        const text = await file.text();
+        try {
+            const data = JSON.parse(text);
+            await erdImport(getActiveErdTab(), data);
+        } catch (err) { alert('Import failed: ' + err.message); }
+        e.target.value = '';
+    });
+
+    // Zoom controls
+    document.getElementById('erd-zoom-in').addEventListener('click', async () => {
+        await window.erdReact.zoomIn();
+        const tab = getActiveErdTab();
+        if (tab) updateErdZoomLabel(tab);
+    });
+    document.getElementById('erd-zoom-out').addEventListener('click', async () => {
+        await window.erdReact.zoomOut();
+        const tab = getActiveErdTab();
+        if (tab) updateErdZoomLabel(tab);
+    });
+    document.getElementById('erd-zoom-fit').addEventListener('click', async () => {
+        await window.erdReact.fitView();
+        const tab = getActiveErdTab();
+        if (tab) updateErdZoomLabel(tab);
+    });
+    document.getElementById('erd-zoom-reset').addEventListener('click', async () => {
+        await window.erdReact.resetZoom();
+        const tab = getActiveErdTab();
+        if (tab) updateErdZoomLabel(tab);
+    });
+
+    // Update zoom label on any zoom change (poll every 500ms while active)
+    setInterval(async () => {
+        const tab = getActiveErdTab();
+        if (tab) updateErdZoomLabel(tab);
+    }, 500);
+}
+
+// --------- Export / Import ----------
+async function erdExport(tab, format) {
+    const safeName = `${(tab.connName || 'conn').replace(/[^a-z0-9]+/gi,'_')}_${tab.schema}`;
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    try {
+        if (format === 'png' || format === 'svg') {
+            // Capture the ERD viewport using dom-to-image via the bridge (HTMLToImage alternative)
+            const view = document.querySelector('.rf-erd-wrapper .react-flow__viewport');
+            const container = document.querySelector('.rf-erd-wrapper .react-flow');
+            if (!view || !container) {
+                showErdStatus('Nothing to export', 2000);
+                return;
+            }
+            // Simple approach: serialize SVG via XMLSerializer for edges + inline node HTML
+            if (format === 'svg') {
+                // Basic SVG export: combine the React Flow SVG (edges) + HTML-foreignObject for nodes
+                const rfSvg = container.querySelector('svg');
+                if (rfSvg) {
+                    const cloned = rfSvg.cloneNode(true);
+                    cloned.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+                    const blob = new Blob([new XMLSerializer().serializeToString(cloned)],
+                        { type: 'image/svg+xml' });
+                    downloadBlob(blob, `${safeName}_${ts}.svg`);
+                    showErdStatus('Exported SVG (edges only; use PNG for full export)', 2500);
+                }
+            } else {
+                // PNG via canvas screenshot of the wrapper
+                await erdPngExport(container, `${safeName}_${ts}.png`);
+            }
+        } else if (format === 'json') {
+            const layout = await window.erdReact.getPositions();
+            const positions = layout ? layout.positions : {};
+            const graph = await window.erdReact.getGraph();
+            const payload = {
+                version: '1.0',
+                meta: { connectionName: tab.connName, schema: tab.schema, exportedAt: new Date().toISOString() },
+                options: tab.options,
+                nodes: (graph ? graph.nodes : []).map(n => ({
+                    id: n.id, label: n.label, columns: n.columns, comment: n.comment || '',
+                    position: positions[n.id] || null,
+                })),
+                edges: graph ? graph.edges : [],
+            };
+            downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }),
+                `${safeName}_${ts}.json`);
+        } else {
+            // Server-side text formats
+            const result = await api.metadata.erExport(tab.connId, tab.schema, format);
+            const extMap = { mermaid: 'mmd', dbml: 'dbml', ddl: 'sql', plantuml: 'puml' };
+            const ext = extMap[format] || 'txt';
+            downloadBlob(new Blob([result.content], { type: 'text/plain' }),
+                `${safeName}_${ts}.${ext}`);
+        }
+        showErdStatus(`Exported as ${format.toUpperCase()}`, 2000);
+    } catch (e) {
+        console.error(e);
+        showErdStatus(`Export failed: ${e.message}`, 3000);
+    }
+}
+
+async function erdPngExport(container, filename) {
+    // Minimal PNG export: use html2canvas pattern via SVG foreignObject → canvas
+    const rect = container.getBoundingClientRect();
+    const width = Math.ceil(rect.width);
+    const height = Math.ceil(rect.height);
+    // Serialize the container HTML into an SVG foreignObject
+    const cloned = container.cloneNode(true);
+    // Inline computed styles is complex; use a simpler approach: let browser do it
+    const svgData = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+            <foreignObject width="100%" height="100%">
+                <div xmlns="http://www.w3.org/1999/xhtml">${new XMLSerializer().serializeToString(cloned)}</div>
+            </foreignObject>
+        </svg>`;
+    const img = new Image();
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgData);
+    await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+    });
+    const canvas = document.createElement('canvas');
+    canvas.width = width * 2;
+    canvas.height = height * 2;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = document.body.dataset.theme === 'light' ? '#ffffff' : '#1e1e1e';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.scale(2, 2);
+    ctx.drawImage(img, 0, 0);
+    canvas.toBlob(blob => downloadBlob(blob, filename), 'image/png');
+}
+
+async function erdImport(tab, data) {
+    if (!tab) return;
+    if (!data || !data.nodes) { alert('Invalid ERD JSON'); return; }
+    const positions = {};
+    data.nodes.forEach(n => { if (n.position && n.id) positions[n.id] = n.position; });
+    if (data.options && typeof data.options === 'object') {
+        tab.options = Object.assign(tab.options, data.options);
+        saveErdOptions(tab);
+        await window.erdReact.setOptions(data.options);
+    }
+    await window.erdReact.applyPositions(positions);
+    await window.erdReact.fitView();
+    showErdStatus(`Imported ${Object.keys(positions).length} positions`, 3000);
+}
+
+function downloadBlob(blob, filename) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// Menubar / toolbar handlers — callable without an ERD tab being focused
+// (shows an alert if none is active).
+async function menuErdExport(format) {
+    const tab = getActiveErdTab();
+    if (!tab) {
+        alert('Open an ERD tab first (right-click a schema → Show ER Diagram).');
+        return;
+    }
+    await erdExport(tab, format);
+}
+
+function menuErdImport() {
+    const tab = getActiveErdTab();
+    if (!tab) {
+        alert('Open an ERD tab first (right-click a schema → Show ER Diagram).');
+        return;
+    }
+    // Reuse the hidden file input already wired to erdImport
+    const input = document.getElementById('erd-import-file');
+    if (input) input.click();
 }
 
 // ============================================================
@@ -1391,9 +3011,53 @@ async function loadConnections() {
 function initEventHandlers() {
     document.getElementById('btn-add-conn').onclick = () => showConnectionDialog();
     document.getElementById('btn-run').onclick = executeQuery;
+    document.getElementById('btn-explain').onclick = () => executeExplain(false);
+    document.getElementById('btn-explain-analyze').onclick = () => executeExplain(true);
+    document.getElementById('btn-format').onclick = formatSql;
     document.getElementById('btn-new-tab').onclick = () => addEditorTab();
     document.getElementById('btn-add-tab').onclick = () => addEditorTab();
-    document.getElementById('btn-export').onclick = exportCsv;
+    // Menu bar open/close logic
+    let activeMenu = null;
+    document.querySelectorAll('.menu-item').forEach(item => {
+        const trigger = item.querySelector('.menu-trigger');
+        trigger.onclick = (e) => {
+            e.stopPropagation();
+            if (activeMenu === item) {
+                item.classList.remove('open');
+                activeMenu = null;
+            } else {
+                if (activeMenu) activeMenu.classList.remove('open');
+                item.classList.add('open');
+                activeMenu = item;
+            }
+        };
+        // Hover to switch menus when one is open
+        trigger.onmouseenter = () => {
+            if (activeMenu && activeMenu !== item) {
+                activeMenu.classList.remove('open');
+                item.classList.add('open');
+                activeMenu = item;
+            }
+        };
+    });
+    // Close menu on outside click
+    document.addEventListener('click', (e) => {
+        if (activeMenu && !e.target.closest('.menu-item')) {
+            activeMenu.classList.remove('open');
+            activeMenu = null;
+        }
+    });
+    // Close menu after action click
+    document.querySelectorAll('.menu-action').forEach(action => {
+        const orig = action.onclick;
+        action.addEventListener('click', () => {
+            if (activeMenu) { activeMenu.classList.remove('open'); activeMenu = null; }
+        });
+    });
+    // Export options within menu
+    document.querySelectorAll('.export-option').forEach(opt => {
+        opt.onclick = () => exportData(opt.dataset.format);
+    });
 
     // Connection dialog
     document.getElementById('conn-dialog-close').onclick = hideConnectionDialog;
@@ -1422,18 +3086,105 @@ function initEventHandlers() {
 
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        const mod = e.ctrlKey || e.metaKey;
+
+        // Ctrl/Cmd+Enter — Execute query
+        if (mod && e.key === 'Enter') {
             e.preventDefault();
             executeQuery();
+            return;
         }
-        // Ctrl/Cmd+F to focus result filter when result panel is visible
-        if ((e.ctrlKey || e.metaKey) && e.key === 'f' && state.resultData) {
+
+        // Ctrl/Cmd+F — Focus result filter
+        if (mod && e.key === 'f' && state.resultData) {
             const filterInput = document.getElementById('result-filter-input');
             if (filterInput && filterInput.offsetParent !== null) {
                 e.preventDefault();
                 filterInput.focus();
                 filterInput.select();
+                return;
             }
+        }
+
+        // Alt+N — New editor tab
+        if (e.altKey && e.key === 'n') {
+            e.preventDefault();
+            addEditorTab();
+            return;
+        }
+
+        // Alt+W — Close current tab
+        if (e.altKey && e.key === 'w') {
+            e.preventDefault();
+            if (state.activeEditorId && state.editors.length > 1) {
+                closeTab(state.activeEditorId);
+            }
+            return;
+        }
+
+        // Alt+1~9 — Switch to tab N
+        if (e.altKey && e.key >= '1' && e.key <= '9') {
+            e.preventDefault();
+            const idx = parseInt(e.key) - 1;
+            if (idx < state.editors.length) {
+                switchTab(state.editors[idx].id);
+            }
+            return;
+        }
+
+        // Ctrl/Cmd+P — Command Palette
+        if (mod && e.key === 'p') {
+            e.preventDefault();
+            showCommandPalette();
+            return;
+        }
+
+        // Ctrl/Cmd+Shift+F — Format SQL
+        if (mod && e.shiftKey && e.key === 'F') {
+            e.preventDefault();
+            formatSql();
+            return;
+        }
+
+        // Ctrl/Cmd+S — Save current query
+        if (mod && e.key === 's') {
+            e.preventDefault();
+            saveCurrentQuery();
+            return;
+        }
+
+        // Alt+S — Show saved queries
+        if (e.altKey && e.key === 's') {
+            e.preventDefault();
+            showSavedQueriesDialog();
+            return;
+        }
+
+        // Alt+H — Query History
+        if (e.altKey && e.key === 'h') {
+            e.preventDefault();
+            showHistoryDialog();
+            return;
+        }
+
+        // Alt+X — Export CSV
+        if (e.altKey && e.key === 'x') {
+            e.preventDefault();
+            exportCsv();
+            return;
+        }
+
+        // Escape — Close open modals/panels
+        if (e.key === 'Escape') {
+            // Close AI chat panel if open
+            const chatPanel = document.getElementById('ai-chat-panel');
+            if (chatPanel && chatPanel.style.display !== 'none') {
+                closeAiChatPanel();
+                return;
+            }
+            // Close any open modal
+            const modals = document.querySelectorAll('.modal[style*="display: flex"], .modal[style*="display:flex"]');
+            modals.forEach(m => m.style.display = 'none');
         }
     });
 
@@ -1642,11 +3393,24 @@ function setTheme(theme) {
 }
 
 function initTheme() {
-    const saved = localStorage.getItem('dbee-theme') || 'normal';
-    setTheme(saved);
+    const saved = localStorage.getItem('dbee-theme');
+    if (saved) {
+        setTheme(saved);
+    } else {
+        // Auto-detect OS dark mode
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        setTheme(prefersDark ? 'dark' : 'light');
+    }
 
     document.querySelectorAll('.theme-btn').forEach(btn => {
         btn.onclick = () => setTheme(btn.dataset.theme);
+    });
+
+    // Listen for OS theme changes
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+        if (!localStorage.getItem('dbee-theme')) {
+            setTheme(e.matches ? 'dark' : 'light');
+        }
     });
 }
 
@@ -1824,6 +3588,1047 @@ function initNotesManager() {
 }
 
 // ============================================================
+// Command Palette
+// ============================================================
+const CMD_PALETTE_COMMANDS = [
+    { name: 'Run Query', shortcut: 'Ctrl+Enter', action: executeQuery },
+    { name: 'Explain', shortcut: 'Ctrl+E', action: () => executeExplain(false) },
+    { name: 'Explain Analyze', shortcut: 'Ctrl+Shift+E', action: () => executeExplain(true) },
+    { name: 'Format SQL', shortcut: 'Ctrl+Shift+F', action: formatSql },
+    { name: 'Save Query', shortcut: 'Ctrl+S', action: saveCurrentQuery },
+    { name: 'Saved Queries', shortcut: 'Alt+S', action: showSavedQueriesDialog },
+    { name: 'New Tab', shortcut: 'Alt+N', action: () => addEditorTab() },
+    { name: 'Export CSV', action: () => exportData('csv') },
+    { name: 'Export JSON', action: () => exportData('json') },
+    { name: 'Export Excel', action: () => exportData('xlsx') },
+    { name: 'Export SQL INSERT', action: () => exportData('insert') },
+    { name: 'Query History', shortcut: 'Alt+H', action: showHistoryDialog },
+    { name: 'AI Chat', shortcut: 'Ctrl+Shift+A', action: toggleAiChatPanel },
+    { name: 'AI Settings', action: showAiSettingsDialog },
+    { name: 'AI: Explain SQL', action: aiExplainSql },
+    { name: 'AI: Optimize SQL', action: aiOptimizeSql },
+    { name: 'AI: Analyze Results', action: aiAnalyzeResult },
+];
+
+function showCommandPalette() {
+    const palette = document.getElementById('command-palette');
+    const input = document.getElementById('cmd-palette-input');
+    palette.style.display = 'block';
+    input.value = '';
+    input.focus();
+    renderPaletteCommands('');
+}
+
+function hideCommandPalette() {
+    document.getElementById('command-palette').style.display = 'none';
+}
+
+function renderPaletteCommands(filter) {
+    const list = document.getElementById('cmd-palette-list');
+    const f = filter.toLowerCase();
+    const filtered = CMD_PALETTE_COMMANDS.filter(c => c.name.toLowerCase().includes(f));
+    list.innerHTML = filtered.map((cmd, i) => `
+        <div class="cmd-palette-item${i === 0 ? ' active' : ''}" data-idx="${i}">
+            <span class="cmd-name">${cmd.name}</span>
+            ${cmd.shortcut ? `<span class="cmd-shortcut">${cmd.shortcut}</span>` : ''}
+        </div>
+    `).join('');
+
+    list.querySelectorAll('.cmd-palette-item').forEach(item => {
+        item.onclick = () => {
+            const idx = parseInt(item.dataset.idx);
+            hideCommandPalette();
+            filtered[idx]?.action();
+        };
+    });
+}
+
+function initCommandPalette() {
+    const input = document.getElementById('cmd-palette-input');
+    input.oninput = () => renderPaletteCommands(input.value);
+    input.onkeydown = (e) => {
+        if (e.key === 'Escape') { hideCommandPalette(); return; }
+        if (e.key === 'Enter') {
+            const active = document.querySelector('.cmd-palette-item.active');
+            if (active) active.click();
+            return;
+        }
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            const items = [...document.querySelectorAll('.cmd-palette-item')];
+            const cur = items.findIndex(i => i.classList.contains('active'));
+            if (cur >= 0) items[cur].classList.remove('active');
+            const next = e.key === 'ArrowDown' ? Math.min(cur + 1, items.length - 1) : Math.max(cur - 1, 0);
+            if (items[next]) { items[next].classList.add('active'); items[next].scrollIntoView({ block: 'nearest' }); }
+        }
+    };
+
+    // Close on outside click
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.command-palette')) hideCommandPalette();
+    });
+}
+
+async function executeTxn(cmd) {
+    if (!state.activeConnectionId) { updateStatus('No active connection', true); return; }
+    try {
+        const results = await api.query.execute(state.activeConnectionId, cmd, 1);
+        const r = Array.isArray(results) ? results[0] : results;
+        if (r && r.error) updateStatus(`${cmd} failed: ${r.errorMessage}`, true);
+        else updateStatus(`${cmd} executed`);
+    } catch (e) { updateStatus(`${cmd} failed: ${e.message}`, true); }
+}
+
+async function aiAlterSchema() {
+    const desc = prompt('Describe the schema change in natural language:\n(e.g. "Add an email column to users table")');
+    if (!desc) return;
+    if (!state.activeConnectionId) { updateStatus('No active connection', true); return; }
+    toggleAiChatPanel();
+    appendChatMessage('user', `Alter schema: ${desc}`);
+    const lm = appendChatMessage('loading', '');
+    try {
+        const r = await api.llm.alterSql(state.activeConnectionId, desc);
+        lm.remove();
+        appendChatMessage(r.error ? 'error' : 'assistant', r.message, r.sql);
+    } catch (e) { lm.remove(); appendChatMessage('error', e.message); }
+}
+
+async function aiIndexHint() {
+    const sql = getCurrentSql();
+    if (!sql.trim()) { updateStatus('No SQL for index analysis', true); return; }
+    toggleAiChatPanel();
+    appendChatMessage('user', `Suggest indexes for:\n${sql}`);
+    const loadingMsg = appendChatMessage('loading', '');
+    try {
+        const result = await api.llm.indexHint(state.activeConnectionId, sql);
+        loadingMsg.remove();
+        if (result.error) appendChatMessage('error', result.message);
+        else appendChatMessage('assistant', result.message, result.sql);
+    } catch (e) { loadingMsg.remove(); appendChatMessage('error', e.message); }
+}
+
+// ============================================================
+// Dashboard (#77) - saved query + chart combos
+// ============================================================
+function showDashboard() {
+    if (!state.activeConnectionId) { updateStatus('Connect to a database first', true); return; }
+    toggleAiChatPanel();
+    appendChatMessage('user', 'Create a dashboard summary for this database');
+    const lm = appendChatMessage('loading', '');
+    api.llm.chat(state.activeConnectionId, 'Give me 3-5 useful dashboard queries for this database: row counts per table, recent activity, data distributions. Return each as a SQL query in a code block.')
+        .then(r => { lm.remove(); appendChatMessage(r.error ? 'error' : 'assistant', r.message, r.sql); })
+        .catch(e => { lm.remove(); appendChatMessage('error', e.message); });
+}
+
+// ============================================================
+// Schema & Data Comparison (#78, #79)
+// ============================================================
+function showSchemaCompare() {
+    if (monacoEditor) {
+        monacoEditor.setValue(`-- Schema Comparison: Run on each database and compare results
+-- Database 1:
+SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT
+FROM information_schema.COLUMNS
+WHERE TABLE_SCHEMA = 'your_schema_1'
+ORDER BY TABLE_NAME, ORDINAL_POSITION;
+
+-- Database 2:
+-- Connect to second DB and run the same query, then compare results`);
+        monacoEditor.focus();
+        updateStatus('Schema comparison queries loaded');
+    }
+}
+
+function showDataCompare() {
+    const table = prompt('Table name to compare:');
+    if (!table) return;
+    if (monacoEditor) {
+        monacoEditor.setValue(`-- Data Comparison for: ${table}
+-- Run on Database 1:
+SELECT MD5(GROUP_CONCAT(CONCAT_WS(',', ${table}.*) ORDER BY 1)) AS checksum,
+       COUNT(*) AS row_count
+FROM ${table};
+
+-- Compare checksums and row counts between databases
+-- For detailed diff, use EXCEPT/MINUS or full outer join patterns`);
+        monacoEditor.focus();
+    }
+}
+
+// ============================================================
+// DB Monitoring (#80, #81)
+// ============================================================
+async function publishToConfluence() {
+    const baseUrl = prompt('Confluence Base URL:', 'https://your-domain.atlassian.net/wiki');
+    if (!baseUrl) return;
+    const spaceKey = prompt('Space Key:', 'DEV');
+    if (!spaceKey) return;
+    const email = prompt('Atlassian Email:');
+    if (!email) return;
+    const apiToken = prompt('API Token:');
+    if (!apiToken) return;
+
+    const schema = state.autocompleteCache?.schemas?.[0]?.name || 'schema';
+    try {
+        const doc = await api.metadata.documentation(state.activeConnectionId, schema);
+        const content = doc.markdown.replace(/\n/g, '<br/>');
+        const result = await api.request('POST', '/api/integration/confluence/publish', {
+            baseUrl, spaceKey, title: `DBee Schema: ${schema}`, content, email, apiToken
+        });
+        if (result.success) updateStatus('Published to Confluence: ' + (result.pageUrl || ''));
+        else updateStatus('Confluence failed: ' + result.message, true);
+    } catch (e) { updateStatus('Failed: ' + e.message, true); }
+}
+
+async function createJiraIssue() {
+    const baseUrl = prompt('Jira Base URL:', 'https://your-domain.atlassian.net');
+    if (!baseUrl) return;
+    const projectKey = prompt('Project Key:', 'DB');
+    if (!projectKey) return;
+    const summary = prompt('Issue Summary:', 'Database query finding');
+    if (!summary) return;
+    const email = prompt('Atlassian Email:');
+    if (!email) return;
+    const apiToken = prompt('API Token:');
+    if (!apiToken) return;
+
+    const sql = getCurrentSql();
+    const description = `SQL Query:\n${sql}\n\nGenerated from DBee`;
+    try {
+        const result = await api.request('POST', '/api/integration/jira/create-issue', {
+            baseUrl, projectKey, summary, description, email, apiToken
+        });
+        if (result.success) updateStatus(`Jira issue created: ${result.issueKey}`);
+        else updateStatus('Jira failed: ' + result.message, true);
+    } catch (e) { updateStatus('Failed: ' + e.message, true); }
+}
+
+async function exportSchemaDoc() {
+    if (!state.activeConnectionId) { updateStatus('No connection', true); return; }
+    // Find current schema from autocomplete cache
+    const schema = state.autocompleteCache?.schemas?.[0]?.name;
+    if (!schema) { updateStatus('No schema detected. Connect and expand a schema first.', true); return; }
+    try {
+        updateStatus('Generating documentation...');
+        const result = await api.metadata.documentation(state.activeConnectionId, schema);
+        const blob = new Blob([result.markdown], { type: 'text/markdown' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `${schema}-schema-doc.md`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        updateStatus(`Schema documentation exported for ${schema}`);
+    } catch (e) { updateStatus('Failed: ' + e.message, true); }
+}
+
+function showProcessList() {
+    if (!state.activeConnectionId) { updateStatus('No connection', true); return; }
+    if (monacoEditor) {
+        monacoEditor.setValue('SHOW PROCESSLIST;');
+        executeQuery();
+    }
+}
+
+function showDbStatus() {
+    if (!state.activeConnectionId) { updateStatus('No connection', true); return; }
+    if (monacoEditor) {
+        monacoEditor.setValue(`-- DB Status Overview
+SHOW GLOBAL STATUS WHERE Variable_name IN ('Connections', 'Threads_connected', 'Threads_running', 'Questions', 'Slow_queries', 'Uptime');
+
+-- Table sizes
+SELECT table_schema AS 'Database',
+       ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS 'Size (MB)',
+       SUM(table_rows) AS 'Total Rows'
+FROM information_schema.TABLES
+GROUP BY table_schema
+ORDER BY SUM(data_length + index_length) DESC;`);
+        executeQuery();
+    }
+}
+
+// ============================================================
+// Chart Visualization
+// ============================================================
+let chartInstance = null;
+
+function showChartDialog() {
+    if (!state.resultData || !state.resultData.rows.length) {
+        updateStatus('No result data to chart', true); return;
+    }
+    const dialog = document.getElementById('chart-dialog');
+    dialog.style.display = 'flex';
+    dialog.querySelector('.modal-backdrop').onclick = () => dialog.style.display = 'none';
+
+    const cols = state.resultData.columnNames;
+    const labelSel = document.getElementById('chart-label-col');
+    const dataSel = document.getElementById('chart-data-col');
+    labelSel.innerHTML = cols.map((c, i) => `<option value="${i}">${c} (Label)</option>`).join('');
+    dataSel.innerHTML = cols.map((c, i) => `<option value="${i}"${i === 1 ? ' selected' : ''}>${c} (Data)</option>`).join('');
+
+    renderChart();
+}
+
+function renderChart() {
+    if (!state.resultData) return;
+    const type = document.getElementById('chart-type').value;
+    const labelIdx = parseInt(document.getElementById('chart-label-col').value);
+    const dataIdx = parseInt(document.getElementById('chart-data-col').value);
+    const rows = state.resultData.rows.slice(0, 100); // max 100 data points
+
+    const labels = rows.map(r => r[labelIdx] !== null ? String(r[labelIdx]) : 'NULL');
+    const data = rows.map(r => {
+        const v = r[dataIdx];
+        return v !== null ? (typeof v === 'number' ? v : parseFloat(v) || 0) : 0;
+    });
+
+    const colors = labels.map((_, i) => `hsl(${(i * 37) % 360}, 70%, 55%)`);
+    const canvas = document.getElementById('chart-canvas');
+
+    if (chartInstance) chartInstance.destroy();
+    chartInstance = new Chart(canvas, {
+        type,
+        data: {
+            labels,
+            datasets: [{
+                label: state.resultData.columnNames[dataIdx],
+                data,
+                backgroundColor: colors,
+                borderColor: type === 'line' ? 'var(--accent)' : colors,
+                borderWidth: 1,
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: type === 'pie' || type === 'doughnut' } },
+        }
+    });
+}
+
+// ============================================================
+// Internationalization (i18n)
+// ============================================================
+let i18nData = {};
+
+async function setLanguage(lang) {
+    try {
+        const res = await fetch(`/i18n/${lang}.json`);
+        i18nData = await res.json();
+        localStorage.setItem('dbee-lang', lang);
+        // Update menu triggers
+        document.querySelectorAll('[data-i18n]').forEach(el => {
+            const key = el.dataset.i18n;
+            if (i18nData[key]) el.textContent = i18nData[key];
+        });
+        updateStatus(`Language: ${lang}`);
+    } catch (e) {
+        console.warn('Failed to load language:', e);
+    }
+}
+
+function restoreLanguage() {
+    const lang = localStorage.getItem('dbee-lang');
+    if (lang && lang !== 'en') setLanguage(lang);
+}
+
+// ============================================================
+// Global Zoom
+// ============================================================
+function adjustZoom(dir) {
+    const root = document.documentElement;
+    let currentZoom = parseFloat(localStorage.getItem('dbee-zoom') || '100');
+    if (dir === 0) currentZoom = 100;
+    else currentZoom = Math.max(70, Math.min(150, currentZoom + dir * 10));
+    root.style.fontSize = currentZoom + '%';
+    localStorage.setItem('dbee-zoom', String(currentZoom));
+    updateStatus(`Zoom: ${currentZoom}%`);
+}
+
+function restoreZoom() {
+    const zoom = localStorage.getItem('dbee-zoom');
+    if (zoom) document.documentElement.style.fontSize = zoom + '%';
+}
+
+// ============================================================
+// Connection Import/Export
+// ============================================================
+function exportConnections() {
+    if (!state.connections || state.connections.length === 0) { updateStatus('No connections to export', true); return; }
+    // Strip passwords for security
+    const safe = state.connections.map(c => {
+        const copy = { ...c, password: '***' };
+        return copy;
+    });
+    const blob = new Blob([JSON.stringify(safe, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'dbee-connections.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    updateStatus(`Exported ${safe.length} connections (passwords masked)`);
+}
+
+function importConnections() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = async () => {
+        if (!input.files.length) return;
+        try {
+            const text = await input.files[0].text();
+            const conns = JSON.parse(text);
+            if (!Array.isArray(conns)) { updateStatus('Invalid connections file', true); return; }
+            let imported = 0;
+            for (const conn of conns) {
+                conn.password = conn.password === '***' ? '' : (conn.password || '');
+                delete conn.id; // will get new ID
+                await api.connections.create(conn);
+                imported++;
+            }
+            await loadConnections();
+            updateStatus(`Imported ${imported} connections`);
+        } catch (e) { updateStatus('Import failed: ' + e.message, true); }
+    };
+    input.click();
+}
+
+// ============================================================
+// Data Import
+// ============================================================
+function showImportDialog() {
+    if (!state.activeConnectionId) { updateStatus('No active connection', true); return; }
+    document.getElementById('import-dialog').style.display = 'flex';
+    document.getElementById('import-result').style.display = 'none';
+    document.getElementById('import-type').onchange = () => {
+        document.getElementById('import-table-row').style.display =
+            document.getElementById('import-type').value === 'csv' ? '' : 'none';
+    };
+}
+
+async function executeImport() {
+    const type = document.getElementById('import-type').value;
+    const fileInput = document.getElementById('import-file');
+    if (!fileInput.files.length) { updateStatus('No file selected', true); return; }
+
+    const formData = new FormData();
+    formData.append('connectionId', state.activeConnectionId);
+    formData.append('file', fileInput.files[0]);
+    if (type === 'csv') {
+        const table = document.getElementById('import-table').value.trim();
+        if (!table) { updateStatus('Enter target table name', true); return; }
+        formData.append('table', table);
+    }
+
+    const resultDiv = document.getElementById('import-result');
+    resultDiv.style.display = 'block';
+    resultDiv.innerHTML = '<span style="color:var(--accent)">Importing...</span>';
+
+    try {
+        const res = await fetch(`/api/import/${type}`, { method: 'POST', body: formData });
+        const data = await res.json();
+        if (data.success) {
+            resultDiv.innerHTML = `<span style="color:var(--success)">Success! ${data.executed || data.inserted || 0} statements executed.</span>`;
+        } else {
+            resultDiv.innerHTML = `<span style="color:var(--error)">Completed with ${data.errors} errors. ${data.executed || data.inserted || 0} succeeded.</span>`;
+        }
+    } catch (e) {
+        resultDiv.innerHTML = `<span style="color:var(--error)">Import failed: ${e.message}</span>`;
+    }
+}
+
+// ============================================================
+// Editor Settings
+// ============================================================
+function showEditorSettings() {
+    const s = JSON.parse(localStorage.getItem('dbee-editor-settings') || '{}');
+    document.getElementById('es-font-size').value = s.fontSize || 14;
+    document.getElementById('es-tab-size').value = s.tabSize || 4;
+    document.getElementById('es-word-wrap').value = s.wordWrap || 'off';
+    document.getElementById('es-minimap').value = s.minimap ?? 'false';
+    document.getElementById('es-line-numbers').value = s.lineNumbers || 'on';
+    document.getElementById('editor-settings-dialog').style.display = 'flex';
+    document.getElementById('editor-settings-close').onclick = closeEditorSettings;
+    document.getElementById('editor-settings-dialog').querySelector('.modal-backdrop').onclick = closeEditorSettings;
+}
+
+function closeEditorSettings() {
+    document.getElementById('editor-settings-dialog').style.display = 'none';
+}
+
+function applyEditorSettings() {
+    const s = {
+        fontSize: parseInt(document.getElementById('es-font-size').value),
+        tabSize: parseInt(document.getElementById('es-tab-size').value),
+        wordWrap: document.getElementById('es-word-wrap').value,
+        minimap: document.getElementById('es-minimap').value,
+        lineNumbers: document.getElementById('es-line-numbers').value,
+    };
+    localStorage.setItem('dbee-editor-settings', JSON.stringify(s));
+    if (monacoEditor) {
+        monacoEditor.updateOptions({
+            fontSize: s.fontSize,
+            tabSize: s.tabSize,
+            wordWrap: s.wordWrap,
+            minimap: { enabled: s.minimap === 'true' },
+            lineNumbers: s.lineNumbers,
+        });
+    }
+    closeEditorSettings();
+    updateStatus('Editor settings applied');
+}
+
+function restoreEditorSettings() {
+    const s = JSON.parse(localStorage.getItem('dbee-editor-settings') || '{}');
+    if (monacoEditor && Object.keys(s).length > 0) {
+        monacoEditor.updateOptions({
+            fontSize: s.fontSize || 14,
+            tabSize: s.tabSize || 4,
+            wordWrap: s.wordWrap || 'off',
+            minimap: { enabled: (s.minimap || 'false') === 'true' },
+            lineNumbers: s.lineNumbers || 'on',
+        });
+    }
+}
+
+// ============================================================
+// Icon Toolbar Toggle
+// ============================================================
+function toggleIconToolbar() {
+    const tb = document.getElementById('icon-toolbar');
+    const btn = document.getElementById('btn-toggle-toolbar');
+    if (tb.style.display === 'none') {
+        tb.style.display = 'flex';
+        btn.textContent = 'Hide Toolbar';
+        localStorage.setItem('dbee-toolbar-visible', 'true');
+    } else {
+        tb.style.display = 'none';
+        btn.textContent = 'Show Toolbar';
+        localStorage.setItem('dbee-toolbar-visible', 'false');
+    }
+}
+
+function restoreToolbarState() {
+    const visible = localStorage.getItem('dbee-toolbar-visible');
+    const tb = document.getElementById('icon-toolbar');
+    const btn = document.getElementById('btn-toggle-toolbar');
+    if (visible === 'false') {
+        tb.style.display = 'none';
+        if (btn) btn.textContent = 'Show Toolbar';
+    }
+}
+
+// ============================================================
+// AI SQL Assistants (#40, #41, #42)
+// ============================================================
+async function aiExplainSql() {
+    const sql = getCurrentSql();
+    if (!sql.trim()) { updateStatus('No SQL to explain', true); return; }
+    toggleAiChatPanel(); // open chat panel
+    appendChatMessage('user', `Explain this SQL:\n${sql}`);
+    const loadingMsg = appendChatMessage('loading', '');
+    try {
+        const result = await api.llm.explainSql(sql);
+        loadingMsg.remove();
+        if (result.error) appendChatMessage('error', result.message);
+        else appendChatMessage('assistant', result.message, result.sql);
+    } catch (e) { loadingMsg.remove(); appendChatMessage('error', e.message); }
+}
+
+async function aiOptimizeSql() {
+    const sql = getCurrentSql();
+    if (!sql.trim()) { updateStatus('No SQL to optimize', true); return; }
+    toggleAiChatPanel();
+    appendChatMessage('user', `Optimize this SQL:\n${sql}`);
+    const loadingMsg = appendChatMessage('loading', '');
+    try {
+        const result = await api.llm.optimizeSql(state.activeConnectionId, sql);
+        loadingMsg.remove();
+        if (result.error) appendChatMessage('error', result.message);
+        else appendChatMessage('assistant', result.message, result.sql);
+    } catch (e) { loadingMsg.remove(); appendChatMessage('error', e.message); }
+}
+
+async function aiAnalyzeResult() {
+    if (!state.resultData) { updateStatus('No result to analyze', true); return; }
+    const sql = state.lastResult?.sql || '';
+    const rows = state.resultData.rows.slice(0, 20); // send first 20 rows
+    const cols = state.resultData.columnNames;
+    let message = `SQL: ${sql}\n\nResults (${state.resultData.rows.length} total rows, showing first ${rows.length}):\n`;
+    message += cols.join(' | ') + '\n';
+    rows.forEach(r => { message += r.map(v => v === null ? 'NULL' : String(v)).join(' | ') + '\n'; });
+
+    toggleAiChatPanel();
+    appendChatMessage('user', 'Analyze query results');
+    const loadingMsg = appendChatMessage('loading', '');
+    try {
+        const result = await api.llm.analyzeResult(message);
+        loadingMsg.remove();
+        if (result.error) appendChatMessage('error', result.message);
+        else appendChatMessage('assistant', result.message, null);
+    } catch (e) { loadingMsg.remove(); appendChatMessage('error', e.message); }
+}
+
+// ============================================================
+// AI Chat Panel
+// ============================================================
+function toggleAiChatPanel() {
+    const panel = document.getElementById('ai-chat-panel');
+    const isVisible = panel.style.display !== 'none';
+    panel.style.display = isVisible ? 'none' : 'flex';
+    if (!isVisible) {
+        document.getElementById('ai-chat-input').focus();
+    }
+}
+
+function closeAiChatPanel() {
+    document.getElementById('ai-chat-panel').style.display = 'none';
+}
+
+function saveAiChatHistory() {
+    const msgs = document.getElementById('ai-chat-messages');
+    if (!msgs) return;
+    const items = [];
+    msgs.querySelectorAll('.ai-chat-msg').forEach(m => {
+        if (m.classList.contains('ai-chat-msg-loading')) return;
+        const role = m.classList.contains('ai-chat-msg-user') ? 'user'
+            : m.classList.contains('ai-chat-msg-error') ? 'error' : 'assistant';
+        const content = m.querySelector('.ai-msg-content')?.textContent || '';
+        const sql = m.querySelector('.ai-sql-code')?.textContent || null;
+        items.push({ role, content, sql });
+    });
+    try { localStorage.setItem('dbee-ai-chat', JSON.stringify(items.slice(-50))); } catch (e) {}
+}
+
+function loadAiChatHistory() {
+    try {
+        const items = JSON.parse(localStorage.getItem('dbee-ai-chat') || '[]');
+        if (items.length === 0) return;
+        const container = document.getElementById('ai-chat-messages');
+        const welcome = container.querySelector('.ai-chat-welcome');
+        if (welcome) welcome.remove();
+        items.forEach(item => appendChatMessage(item.role, item.content, item.sql));
+    } catch (e) {}
+}
+
+function clearAiChat() {
+    try { localStorage.removeItem('dbee-ai-chat'); } catch (e) {}
+    const container = document.getElementById('ai-chat-messages');
+    container.innerHTML = `
+        <div class="ai-chat-welcome">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.4"><path d="M12 2a4 4 0 0 0-4 4c0 2.8 4 6 4 6s4-3.2 4-6a4 4 0 0 0-4-4z"/><circle cx="12" cy="6" r="1.5"/><path d="M6 12c-2 0-4 1-4 3s2 3 4 3"/><path d="M18 12c2 0 4 1 4 3s-2 3-4 3"/><path d="M8 21c0-2 2-3 4-3s4 1 4 3"/></svg>
+            <p>Ask a question in natural language and I'll generate SQL for you.</p>
+            <p class="ai-chat-hint">Example: "Show all members who enrolled after 2024"</p>
+        </div>`;
+}
+
+function appendChatMessage(role, content, sql) {
+    const container = document.getElementById('ai-chat-messages');
+    // Remove welcome message if present
+    const welcome = container.querySelector('.ai-chat-welcome');
+    if (welcome) welcome.remove();
+
+    const msgDiv = document.createElement('div');
+    msgDiv.className = `ai-chat-msg ai-chat-msg-${role}`;
+
+    if (role === 'user') {
+        msgDiv.innerHTML = `<div class="ai-msg-content">${escapeHtml(content)}</div>`;
+    } else if (role === 'assistant') {
+        let html = `<div class="ai-msg-content">${formatAiMessage(content)}</div>`;
+        if (sql) {
+            html += `<div class="ai-msg-sql">
+                <div class="ai-sql-header">
+                    <span>Generated SQL</span>
+                    <div style="display:flex;gap:4px;">
+                        <button class="btn btn-ghost btn-xs ai-btn-edit" title="Edit before inserting">Edit</button>
+                        <button class="btn btn-primary btn-xs ai-btn-insert" title="Insert to Editor">Insert</button>
+                    </div>
+                </div>
+                <pre class="ai-sql-code">${escapeHtml(sql)}</pre>
+                <textarea class="ai-sql-edit" style="display:none;">${escapeHtml(sql)}</textarea>
+            </div>`;
+        }
+        msgDiv.innerHTML = html;
+
+        // Attach insert/edit button handlers
+        if (sql) {
+            const insertBtn = msgDiv.querySelector('.ai-btn-insert');
+            const editBtn = msgDiv.querySelector('.ai-btn-edit');
+            const preEl = msgDiv.querySelector('.ai-sql-code');
+            const textareaEl = msgDiv.querySelector('.ai-sql-edit');
+
+            editBtn.onclick = () => {
+                if (textareaEl.style.display === 'none') {
+                    preEl.style.display = 'none';
+                    textareaEl.style.display = 'block';
+                    textareaEl.focus();
+                    editBtn.textContent = 'Done';
+                } else {
+                    preEl.textContent = textareaEl.value;
+                    preEl.style.display = '';
+                    textareaEl.style.display = 'none';
+                    editBtn.textContent = 'Edit';
+                }
+            };
+
+            insertBtn.onclick = () => {
+                const finalSql = textareaEl.style.display !== 'none' ? textareaEl.value : preEl.textContent;
+                insertSqlToEditor(finalSql);
+            };
+        }
+    } else if (role === 'error') {
+        msgDiv.className = 'ai-chat-msg ai-chat-msg-error';
+        msgDiv.innerHTML = `<div class="ai-msg-content">${escapeHtml(content)}</div>`;
+    } else if (role === 'loading') {
+        msgDiv.className = 'ai-chat-msg ai-chat-msg-loading';
+        msgDiv.innerHTML = `<div class="ai-msg-content"><span class="ai-loading-dots">Thinking<span>...</span></span></div>`;
+    }
+
+    container.appendChild(msgDiv);
+    container.scrollTop = container.scrollHeight;
+    // Auto-save chat history (skip loading messages)
+    if (role !== 'loading') setTimeout(saveAiChatHistory, 100);
+    return msgDiv;
+}
+
+function formatAiMessage(text) {
+    // Simple markdown-like formatting
+    let html = escapeHtml(text);
+    // Bold
+    html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    // Inline code
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    // Line breaks
+    html = html.replace(/\n/g, '<br>');
+    return html;
+}
+
+function insertSqlToEditor(sql) {
+    if (monacoEditor) {
+        const model = monacoEditor.getModel();
+        const lastLine = model.getLineCount();
+        const lastCol = model.getLineMaxColumn(lastLine);
+        const currentContent = model.getValue();
+        const prefix = currentContent.trim() ? '\n\n' : '';
+        monacoEditor.executeEdits('ai-insert', [{
+            range: new monaco.Range(lastLine, lastCol, lastLine, lastCol),
+            text: prefix + sql,
+        }]);
+        monacoEditor.setPosition({ lineNumber: model.getLineCount(), column: 1 });
+        monacoEditor.focus();
+        updateStatus('SQL inserted from AI');
+    }
+}
+
+async function sendAiChatMessage() {
+    const input = document.getElementById('ai-chat-input');
+    const message = input.value.trim();
+    if (!message) return;
+
+    if (!state.activeConnectionId) {
+        appendChatMessage('error', 'No active connection. Connect to a database first.');
+        return;
+    }
+
+    input.value = '';
+    input.style.height = 'auto';
+    appendChatMessage('user', message);
+    const loadingMsg = appendChatMessage('loading', '');
+
+    document.getElementById('btn-ai-chat-send').disabled = true;
+
+    try {
+        const result = await api.llm.chat(state.activeConnectionId, message);
+        loadingMsg.remove();
+
+        if (result.error) {
+            appendChatMessage('error', result.message);
+        } else {
+            appendChatMessage('assistant', result.message, result.sql);
+        }
+    } catch (e) {
+        loadingMsg.remove();
+        appendChatMessage('error', 'Failed: ' + e.message);
+    } finally {
+        document.getElementById('btn-ai-chat-send').disabled = false;
+    }
+}
+
+function initAiChat() {
+    document.getElementById('btn-ai-chat').onclick = toggleAiChatPanel;
+    document.getElementById('btn-ai-chat-close').onclick = closeAiChatPanel;
+    document.getElementById('btn-ai-chat-clear').onclick = clearAiChat;
+    document.getElementById('btn-ai-chat-send').onclick = sendAiChatMessage;
+
+    const chatInput = document.getElementById('ai-chat-input');
+    chatInput.onkeydown = (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendAiChatMessage();
+        }
+        if (e.key === 'Escape') {
+            closeAiChatPanel();
+        }
+    };
+
+    // Auto-resize textarea
+    chatInput.oninput = () => {
+        chatInput.style.height = 'auto';
+        chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
+    };
+
+    // Restore chat history from localStorage
+    loadAiChatHistory();
+}
+
+// ============================================================
+// AI Settings
+// ============================================================
+const LLM_DEFAULTS = {
+    OPENAI: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o', needsKey: true },
+    CLAUDE: { baseUrl: 'https://api.anthropic.com/v1', model: 'claude-sonnet-4-20250514', needsKey: true },
+    OLLAMA: { baseUrl: 'http://localhost:11434', model: 'llama3', needsKey: false },
+};
+
+async function showAiSettingsDialog() {
+    const dialog = document.getElementById('ai-settings-dialog');
+    dialog.style.display = 'flex';
+
+    try {
+        const settings = await api.llm.getSettings();
+        document.getElementById('ai-provider').value = settings.provider || 'OPENAI';
+        document.getElementById('ai-apikey').value = settings.apiKey || '';
+        document.getElementById('ai-baseurl').value = settings.baseUrl || '';
+        document.getElementById('ai-model').value = settings.model || '';
+        document.getElementById('ai-temperature').value = settings.temperature ?? 0.3;
+        document.getElementById('ai-temperature-value').textContent = settings.temperature ?? 0.3;
+        updateAiProviderFields();
+    } catch (e) {
+        console.error('Failed to load AI settings:', e);
+    }
+
+    document.getElementById('ai-test-result').style.display = 'none';
+}
+
+function closeAiSettingsDialog() {
+    document.getElementById('ai-settings-dialog').style.display = 'none';
+}
+
+function updateAiProviderFields() {
+    const provider = document.getElementById('ai-provider').value;
+    const defaults = LLM_DEFAULTS[provider];
+    const keyRow = document.getElementById('row-ai-apikey');
+
+    if (defaults) {
+        // Only update baseUrl/model if they match a different provider's defaults (i.e., user hasn't customized)
+        const currentBase = document.getElementById('ai-baseurl').value;
+        const isDefaultBase = Object.values(LLM_DEFAULTS).some(d => d.baseUrl === currentBase) || !currentBase;
+        if (isDefaultBase) {
+            document.getElementById('ai-baseurl').value = defaults.baseUrl;
+        }
+
+        const currentModel = document.getElementById('ai-model').value;
+        const isDefaultModel = Object.values(LLM_DEFAULTS).some(d => d.model === currentModel) || !currentModel;
+        if (isDefaultModel) {
+            document.getElementById('ai-model').value = defaults.model;
+        }
+
+        keyRow.style.display = defaults.needsKey ? '' : 'none';
+
+        // Auto-detect Ollama models
+        if (provider === 'OLLAMA') {
+            const baseUrl = document.getElementById('ai-baseurl').value || defaults.baseUrl;
+            api.llm.ollamaModels(baseUrl).then(models => {
+                if (models && models.length > 0) {
+                    const modelInput = document.getElementById('ai-model');
+                    // Show available models as datalist
+                    let datalist = document.getElementById('ollama-models-list');
+                    if (!datalist) {
+                        datalist = document.createElement('datalist');
+                        datalist.id = 'ollama-models-list';
+                        document.body.appendChild(datalist);
+                        modelInput.setAttribute('list', 'ollama-models-list');
+                    }
+                    datalist.innerHTML = models.map(m => `<option value="${m}">`).join('');
+                    if (!models.includes(modelInput.value)) modelInput.value = models[0];
+                }
+            }).catch(() => {});
+        }
+    }
+}
+
+function getAiSettingsFromForm() {
+    return {
+        provider: document.getElementById('ai-provider').value,
+        apiKey: document.getElementById('ai-apikey').value,
+        baseUrl: document.getElementById('ai-baseurl').value,
+        model: document.getElementById('ai-model').value,
+        temperature: parseFloat(document.getElementById('ai-temperature').value),
+    };
+}
+
+async function saveAiSettings() {
+    const settings = getAiSettingsFromForm();
+    try {
+        await api.llm.saveSettings(settings);
+        updateStatus('AI settings saved');
+        closeAiSettingsDialog();
+    } catch (e) {
+        updateStatus('Failed to save AI settings: ' + e.message, true);
+    }
+}
+
+async function testAiConnection() {
+    const settings = getAiSettingsFromForm();
+    const resultEl = document.getElementById('ai-test-result');
+    resultEl.style.display = 'block';
+    resultEl.className = 'ai-test-result ai-test-loading';
+    resultEl.textContent = 'Testing connection...';
+
+    document.getElementById('btn-test-ai').disabled = true;
+
+    try {
+        const result = await api.llm.testConnection(settings);
+        if (result.success) {
+            resultEl.className = 'ai-test-result ai-test-success';
+            resultEl.textContent = result.message;
+        } else {
+            resultEl.className = 'ai-test-result ai-test-error';
+            resultEl.textContent = result.message;
+        }
+    } catch (e) {
+        resultEl.className = 'ai-test-result ai-test-error';
+        resultEl.textContent = 'Test failed: ' + e.message;
+    } finally {
+        document.getElementById('btn-test-ai').disabled = false;
+    }
+}
+
+function initAiSettings() {
+    document.getElementById('btn-ai-settings').onclick = showAiSettingsDialog;
+    document.getElementById('ai-settings-dialog-close').onclick = closeAiSettingsDialog;
+    document.getElementById('ai-settings-dialog').querySelector('.modal-backdrop').onclick = closeAiSettingsDialog;
+    document.getElementById('btn-cancel-ai').onclick = closeAiSettingsDialog;
+    document.getElementById('btn-save-ai').onclick = saveAiSettings;
+    document.getElementById('btn-test-ai').onclick = testAiConnection;
+
+    document.getElementById('ai-provider').onchange = updateAiProviderFields;
+    document.getElementById('ai-temperature').oninput = (e) => {
+        document.getElementById('ai-temperature-value').textContent = e.target.value;
+    };
+}
+
+// ============================================================
+// Cell Viewer
+// ============================================================
+function showCellViewer(value, columnName, typeName) {
+    const dialog = document.getElementById('cell-viewer-dialog');
+    const title = document.getElementById('cell-viewer-title');
+    const content = document.getElementById('cell-viewer-content');
+
+    title.textContent = columnName + (typeName ? ` (${typeName})` : '');
+
+    // Try to format JSON
+    let displayVal = value === null ? 'NULL' : String(value);
+    if (typeName && /JSON/i.test(typeName)) {
+        try { displayVal = JSON.stringify(JSON.parse(displayVal), null, 2); } catch (e) { /* keep as-is */ }
+    }
+
+    content.textContent = displayVal;
+    dialog.style.display = 'flex';
+
+    document.getElementById('cell-viewer-close').onclick = () => dialog.style.display = 'none';
+    dialog.querySelector('.modal-backdrop').onclick = () => dialog.style.display = 'none';
+    document.getElementById('btn-cell-copy').onclick = () => {
+        navigator.clipboard.writeText(displayVal);
+        updateStatus('Copied to clipboard');
+    };
+}
+
+// ============================================================
+// Saved Queries
+// ============================================================
+async function saveCurrentQuery() {
+    const sql = getCurrentSql();
+    if (!sql.trim()) { updateStatus('No SQL to save', true); return; }
+    const name = prompt('Save query as:', 'My Query');
+    if (!name) return;
+    try {
+        await api.savedQueries.create({ name, sql, folder: '' });
+        updateStatus(`Query saved: ${name}`);
+    } catch (e) {
+        updateStatus('Failed to save query: ' + e.message, true);
+    }
+}
+
+async function showSavedQueriesDialog() {
+    const dialog = document.getElementById('saved-queries-dialog');
+    dialog.style.display = 'flex';
+    await loadSavedQueries();
+}
+
+function closeSavedQueriesDialog() {
+    document.getElementById('saved-queries-dialog').style.display = 'none';
+}
+
+async function loadSavedQueries() {
+    const list = document.getElementById('saved-queries-list');
+    try {
+        const queries = await api.savedQueries.list();
+        if (queries.length === 0) {
+            list.innerHTML = '<div class="history-empty">No saved queries yet. Use Ctrl+S to save.</div>';
+            return;
+        }
+        list.innerHTML = queries.sort((a, b) => b.updatedAt - a.updatedAt).map(q => `
+            <div class="saved-query-item" data-id="${q.id}">
+                <div class="saved-query-header">
+                    <span class="saved-query-name">${escapeHtml(q.name)}</span>
+                    <div class="saved-query-actions">
+                        <button class="btn-icon sq-load" title="Load to editor">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/></svg>
+                        </button>
+                        <button class="btn-icon sq-delete" title="Delete" style="color:var(--error)">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <pre class="saved-query-sql">${escapeHtml(q.sql.substring(0, 200))}${q.sql.length > 200 ? '...' : ''}</pre>
+            </div>
+        `).join('');
+
+        // Attach handlers
+        list.querySelectorAll('.sq-load').forEach(btn => {
+            btn.onclick = () => {
+                const id = btn.closest('.saved-query-item').dataset.id;
+                const q = queries.find(x => x.id === id);
+                if (q && monacoEditor) {
+                    monacoEditor.setValue(q.sql);
+                    monacoEditor.focus();
+                    closeSavedQueriesDialog();
+                    updateStatus(`Loaded: ${q.name}`);
+                }
+            };
+        });
+        list.querySelectorAll('.sq-delete').forEach(btn => {
+            btn.onclick = async () => {
+                const id = btn.closest('.saved-query-item').dataset.id;
+                if (confirm('Delete this saved query?')) {
+                    await api.savedQueries.delete(id);
+                    loadSavedQueries();
+                }
+            };
+        });
+    } catch (e) {
+        list.innerHTML = `<div class="history-empty">Failed to load: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+function initSavedQueries() {
+    document.getElementById('btn-save-query').onclick = saveCurrentQuery;
+    document.getElementById('btn-saved-queries').onclick = showSavedQueriesDialog;
+    document.getElementById('saved-queries-dialog-close').onclick = closeSavedQueriesDialog;
+    document.getElementById('saved-queries-dialog').querySelector('.modal-backdrop').onclick = closeSavedQueriesDialog;
+}
+
+// ============================================================
 // Query History
 // ============================================================
 function showHistoryDialog() {
@@ -1932,6 +4737,40 @@ function formatRelativeTime(timestamp) {
     return new Date(timestamp).toLocaleDateString();
 }
 
+async function showHistoryStats() {
+    const list = document.getElementById('history-list');
+    try {
+        const s = await api.history.stats();
+        if (s.totalQueries === 0) {
+            list.innerHTML = '<div class="history-empty">No query history for statistics.</div>';
+            return;
+        }
+        let html = `<div class="history-stats">
+            <div class="stats-grid">
+                <div class="stat-card"><div class="stat-value">${s.totalQueries}</div><div class="stat-label">Total Queries</div></div>
+                <div class="stat-card"><div class="stat-value">${s.avgTimeMs}ms</div><div class="stat-label">Avg Time</div></div>
+                <div class="stat-card"><div class="stat-value">${s.maxTimeMs}ms</div><div class="stat-label">Max Time</div></div>
+                <div class="stat-card"><div class="stat-value">${s.errorRate}%</div><div class="stat-label">Error Rate</div></div>
+            </div>`;
+        if (s.slowestQueries && s.slowestQueries.length > 0) {
+            html += '<div class="stats-section-title">Slowest Queries</div>';
+            s.slowestQueries.forEach(q => {
+                html += `<div class="history-item">
+                    <div class="history-item-header">
+                        <span class="history-time-badge">${q.executionTimeMs}ms</span>
+                        <span class="history-conn">${escapeHtml(q.connectionName || '')}</span>
+                    </div>
+                    <pre class="history-sql">${escapeHtml(q.sql)}</pre>
+                </div>`;
+            });
+        }
+        html += '</div>';
+        list.innerHTML = html;
+    } catch (e) {
+        list.innerHTML = `<div class="history-empty">Failed to load stats: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
 function initHistoryManager() {
     document.getElementById('btn-history').onclick = showHistoryDialog;
     document.getElementById('history-dialog-close').onclick = hideHistoryDialog;
@@ -1946,6 +4785,9 @@ function initHistoryManager() {
             loadHistory(e.target.value.trim() || undefined);
         }, 300);
     });
+
+    // Stats
+    document.getElementById('btn-history-stats').onclick = showHistoryStats;
 
     // Clear all
     document.getElementById('btn-clear-history').onclick = async () => {
@@ -1973,7 +4815,41 @@ document.addEventListener('DOMContentLoaded', () => {
     initTunnelManager();
     initNotesManager();
     initHistoryManager();
+    // Global error handler
+    window.onerror = (msg, src, line) => {
+        console.error(`[DBee Error] ${msg} at ${src}:${line}`);
+        updateStatus('An error occurred. Check console for details.', true);
+    };
+    window.onunhandledrejection = (e) => {
+        console.error('[DBee] Unhandled promise rejection:', e.reason);
+    };
+
+    restoreZoom();
+    restoreLanguage();
+    restoreToolbarState();
+    initCommandPalette();
+    initSavedQueries();
+    initAiChat();
+    initAiSettings();
     initResizers();
     initMonaco();
     loadConnections();
+    loadSnippetsCache();
+
+    // Flush pending ERD layout save before unload
+    window.addEventListener('beforeunload', async () => {
+        const activeTab = state.editors.find(t => t.id === state.activeEditorId);
+        if (activeTab && activeTab.type === 'erd' && window.erdReact) {
+            try {
+                const layout = await window.erdReact.getPositions();
+                if (layout) {
+                    await api.erdLayout.save(activeTab.connId, activeTab.schema, {
+                        version: 1, zoom: layout.zoom,
+                        pan: layout.viewport ? { x: layout.viewport.x, y: layout.viewport.y } : { x: 0, y: 0 },
+                        positions: layout.positions,
+                    });
+                }
+            } catch (e) {}
+        }
+    });
 });

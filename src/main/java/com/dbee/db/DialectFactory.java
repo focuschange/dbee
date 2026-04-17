@@ -16,6 +16,10 @@ public class DialectFactory {
         DIALECTS.put(DatabaseType.SQLITE, new SQLiteDialect());
         DIALECTS.put(DatabaseType.MSSQL, new MSSQLDialect());
         DIALECTS.put(DatabaseType.ATHENA, new AthenaDialect());
+        DIALECTS.put(DatabaseType.CLICKHOUSE, new ClickHouseDialect());
+        DIALECTS.put(DatabaseType.DUCKDB, new DuckDBDialect());
+        DIALECTS.put(DatabaseType.MONGODB, new MongoDBDialect());
+        DIALECTS.put(DatabaseType.REDIS, new RedisDialect());
     }
 
     public static DatabaseDialect getDialect(DatabaseType type) {

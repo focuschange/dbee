@@ -2,6 +2,7 @@ plugins {
     java
     id("org.springframework.boot") version "3.4.4"
     id("io.spring.dependency-management") version "1.1.7"
+    id("org.graalvm.buildtools.native") version "0.10.4"
 }
 
 group = "com.dbee"
@@ -27,12 +28,19 @@ dependencies {
     // Connection pooling
     implementation("com.zaxxer:HikariCP:5.1.0")
 
+    // Excel export
+    implementation("org.apache.poi:poi-ooxml:5.2.5")
+
     // JDBC drivers
     implementation("com.mysql:mysql-connector-j:8.3.0")
     implementation("org.postgresql:postgresql:42.7.3")
     implementation("com.oracle.database.jdbc:ojdbc11:23.3.0.23.09")
     implementation("org.xerial:sqlite-jdbc:3.45.3.0")
     implementation("com.microsoft.sqlserver:mssql-jdbc:12.6.1.jre11")
+
+    // Additional DB drivers (optional — add to classpath as needed)
+    implementation("com.clickhouse:clickhouse-jdbc:0.6.3")
+    implementation("org.duckdb:duckdb_jdbc:1.1.3")
 
     // Testing
     testImplementation("org.springframework.boot:spring-boot-starter-test")

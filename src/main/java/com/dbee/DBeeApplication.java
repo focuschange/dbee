@@ -1,6 +1,13 @@
 package com.dbee;
 
 import com.dbee.config.ConnectionConfig;
+import com.dbee.config.AppSecurityConfig;
+import com.dbee.config.SecurityFilter;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import com.dbee.config.AuditLogConfig;
+import com.dbee.config.LlmConfig;
+import com.dbee.config.SavedQueryConfig;
+import com.dbee.config.SnippetConfig;
 import com.dbee.config.NoteConfig;
 import com.dbee.config.QueryHistoryConfig;
 import com.dbee.config.SshTunnelConfig;
@@ -46,6 +53,40 @@ public class DBeeApplication {
     @Bean
     public QueryHistoryConfig queryHistoryConfig() {
         return new QueryHistoryConfig();
+    }
+
+    @Bean
+    public FilterRegistrationBean<SecurityFilter> securityFilter(AppSecurityConfig appSecurityConfig) {
+        FilterRegistrationBean<SecurityFilter> bean = new FilterRegistrationBean<>();
+        bean.setFilter(new SecurityFilter(appSecurityConfig));
+        bean.addUrlPatterns("/api/*");
+        bean.setOrder(1);
+        return bean;
+    }
+
+    @Bean
+    public AuditLogConfig auditLogConfig() {
+        return new AuditLogConfig();
+    }
+
+    @Bean
+    public AppSecurityConfig appSecurityConfig() {
+        return new AppSecurityConfig();
+    }
+
+    @Bean
+    public LlmConfig llmConfig() {
+        return new LlmConfig();
+    }
+
+    @Bean
+    public SnippetConfig snippetConfig() {
+        return new SnippetConfig();
+    }
+
+    @Bean
+    public SavedQueryConfig savedQueryConfig() {
+        return new SavedQueryConfig();
     }
 
     @PreDestroy
