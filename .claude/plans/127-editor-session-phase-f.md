@@ -1,7 +1,7 @@
 ---
 todo: 127
 title: 에디터별 세션(연결) 독립화 Phase F
-status: in_progress
+status: completed
 created: 2026-04-19
 branch: claude/editor-session-1
 ---
