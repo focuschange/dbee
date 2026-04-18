@@ -214,6 +214,9 @@ function setActiveTabConnection(connId, connName) {
     // (e.g. Phase A intermediate state) behave identically.
     state.activeConnectionId = t.connId;
     try { saveEditorSession(); } catch (e) {}
+    try { renderTabs(); } catch (e) {}
+    try { refreshConnectionIndicators(t); } catch (e) {}
+    try { refreshTreeConnectionBadges(); } catch (e) {}
 }
 
 // Clear any tab (SQL or ERD) still referencing a connection that went away.
@@ -227,6 +230,34 @@ function detachConnectionFromTabs(connId) {
     }
     if (state.activeConnectionId === connId) state.activeConnectionId = null;
     try { saveEditorSession(); } catch (e) {}
+    try { refreshTreeConnectionBadges(); } catch (e) {}
+}
+
+// Refresh the tab-usage badge + active highlight on every connection tree node.
+// Called after any change to tab.connId, tab lifecycle, or active tab switch.
+// (#125 Phase C) — does a partial DOM update, not a full tree re-render.
+function refreshTreeConnectionBadges() {
+    const activeConnId = getActiveConnectionId();
+    const counts = new Map();
+    for (const t of (state.editors || [])) {
+        if (t.connId) counts.set(t.connId, (counts.get(t.connId) || 0) + 1);
+    }
+    document.querySelectorAll('.tree-node[data-type="connection"]').forEach(node => {
+        const cid = node.dataset.connId;
+        const count = counts.get(cid) || 0;
+        const badge = node.querySelector('.conn-tab-usage-badge');
+        if (badge) {
+            if (count >= 2) {
+                badge.textContent = `×${count}`;
+                badge.style.display = '';
+                badge.title = `${count} tab(s) use this connection`;
+            } else {
+                badge.textContent = '';
+                badge.style.display = 'none';
+            }
+        }
+        node.classList.toggle('tree-conn-active', !!activeConnId && cid === activeConnId);
+    });
 }
 
 // ============================================================
@@ -607,6 +638,7 @@ function addEditorTab() {
     state.editors.push(tab);
     renderTabs();
     switchTab(id);
+    try { refreshTreeConnectionBadges(); } catch (e) {}
 }
 
 /**
@@ -711,6 +743,7 @@ function switchTab(id) {
     }
     renderTabs();
     refreshConnectionIndicators(tab);
+    try { refreshTreeConnectionBadges(); } catch (e) {}
 }
 
 // Sync the status bar + toolbar connection badge with the tab's own connection.
@@ -755,6 +788,7 @@ function closeTab(id) {
         switchTab(state.editors[newIdx].id);
     }
     renderTabs();
+    try { refreshTreeConnectionBadges(); } catch (e) {}
 }
 
 function renderTabs() {
@@ -1232,6 +1266,9 @@ function renderTree() {
     ungrouped.forEach(conn => {
         container.appendChild(createConnectionNode(conn));
     });
+
+    // Apply tab-usage badges + active highlight after rebuilding the tree
+    try { refreshTreeConnectionBadges(); } catch (e) {}
 }
 
 function createConnectionNode(conn) {
@@ -1250,6 +1287,7 @@ function createConnectionNode(conn) {
             <span class="tree-arrow">&#9654;</span>
             <span class="tree-icon icon-db">&#9711;</span>
             <span class="tree-label">${colorDot}${escapeHtml(conn.name || conn.databaseType)}${sshBadge}</span>
+            <span class="conn-tab-usage-badge" style="display:none"></span>
         </div>
         <div class="tree-children"></div>
     `;
@@ -2868,7 +2906,13 @@ async function handleContextAction(action) {
     if (!contextConn) return;
 
     switch (action) {
-        case 'connect':
+        case 'assign-to-current-tab':
+        case 'connect': // legacy alias
+            activateConnection(contextConn, contextNode);
+            break;
+        case 'open-in-new-tab':
+            // Spawn a new SQL tab, assign this connection to it, then activate.
+            addEditorTab();
             activateConnection(contextConn, contextNode);
             break;
         case 'disconnect':

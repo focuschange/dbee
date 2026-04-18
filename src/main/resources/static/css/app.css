@@ -1551,6 +1551,30 @@ kbd {
     border: 1px solid rgba(99, 130, 255, 0.25);
 }
 
+/* Tab-usage badge on connection tree nodes (#125 Phase C) */
+.conn-tab-usage-badge {
+    margin-left: auto;
+    padding: 1px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    border-radius: 9px;
+    background: var(--accent-subtle);
+    color: var(--accent);
+    line-height: 1.4;
+    flex-shrink: 0;
+}
+
+/* Active tab's connection — subtle highlight on the tree node */
+.tree-node.tree-conn-active > .tree-node-content {
+    background: var(--accent-subtle);
+    color: var(--text-bright);
+    box-shadow: inset 2px 0 0 var(--accent);
+}
+.tree-node.tree-conn-active > .tree-node-content .tree-label {
+    color: var(--text-bright);
+    font-weight: 600;
+}
+
 /* Schema visibility toggle */
 .tree-visibility {
     display: flex;
