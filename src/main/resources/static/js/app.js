@@ -180,7 +180,7 @@ const state = {
     editingTunnelId: null,
     notes: [],
     activeNoteId: null,
-    autocompleteCache: null, // { connectionId, schemas: [{ name, tables: [{ name, type, columns: [{ name, typeName }] }] }] }
+    autocompleteCache: new Map(), // Map<connId, { schemas: [...], _ts }>  — per-tab isolation (#126 Phase D)
     resultData: null, // { columnNames, columnTypes, rows (original), executionTimeMs }
     sortState: { columnIndex: -1, direction: null }, // direction: 'asc' | 'desc' | null
     filterKeyword: '', // result filter keyword
@@ -358,22 +358,30 @@ const SQL_KEYWORDS = [
 const SCHEMA_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 async function loadAutoCompleteCache(connectionId) {
-    // Return cached if still valid
-    if (state.autocompleteCache && state.autocompleteCache.connectionId === connectionId
-        && state.autocompleteCache._ts && Date.now() - state.autocompleteCache._ts < SCHEMA_CACHE_TTL) {
+    if (!connectionId) return;
+    const existing = state.autocompleteCache.get(connectionId);
+    if (existing && existing._ts && Date.now() - existing._ts < SCHEMA_CACHE_TTL) {
         return;
     }
     try {
         const data = await api.metadata.autocomplete(connectionId);
-        state.autocompleteCache = { connectionId, ...data, _ts: Date.now() };
+        state.autocompleteCache.set(connectionId, { ...data, _ts: Date.now() });
     } catch (e) {
         console.warn('Failed to load autocomplete metadata:', e);
-        state.autocompleteCache = null;
+        state.autocompleteCache.delete(connectionId);
     }
 }
 
-function clearAutoCompleteCache() {
-    state.autocompleteCache = null;
+// Fetch the cache entry for a given connection; returns null if missing.
+function getAutocompleteCache(connectionId) {
+    if (!connectionId) return null;
+    return state.autocompleteCache.get(connectionId) || null;
+}
+
+// When called with a connId, clear only that entry; otherwise clear all.
+function clearAutoCompleteCache(connectionId) {
+    if (connectionId) state.autocompleteCache.delete(connectionId);
+    else state.autocompleteCache.clear();
 }
 
 function registerSqlCompletionProvider() {
@@ -408,74 +416,102 @@ function registerSqlCompletionProvider() {
                     endLineNumber: position.lineNumber,
                     endColumn: position.column,
                 };
-                return { suggestions: getDotCompletions(prefix, dotRange, textUntilPosition) };
+                // Pass the whole statement so aliases declared AFTER the cursor
+                // (e.g. `SELECT a.| FROM foo a`) are still resolvable.
+                return { suggestions: getDotCompletions(prefix, dotRange, model.getValue()) };
             }
 
             const suggestions = [];
+            const activeCache = getAutocompleteCache(getActiveConnectionId());
+            const context = parseSqlContext(textUntilPosition);
+            // Narrow the suggestion set based on cursor position:
+            //   • FROM/JOIN/UPDATE/INTO/TABLE  → schemas + tables/views only
+            //   • SELECT/WHERE/AND/ON/SET/…   → columns + keywords (functions) + snippets
+            //   • otherwise                   → everything (keyword-heavy fallback)
+            const mode = context.expectsTable ? 'table'
+                       : context.expectsColumn ? 'column'
+                       : 'any';
 
-            // SQL keywords
-            SQL_KEYWORDS.forEach(kw => {
-                suggestions.push({
-                    label: kw,
-                    kind: monaco.languages.CompletionItemKind.Keyword,
-                    insertText: kw,
-                    range: range,
-                    sortText: '3_' + kw,
-                });
-            });
-
-            // Schema-aware suggestions
-            if (state.autocompleteCache) {
-                const context = parseSqlContext(textUntilPosition);
-                const cache = state.autocompleteCache;
-
-                // Schema names
-                cache.schemas.forEach(schema => {
+            // SQL keywords (skip when we're clearly expecting a table identifier)
+            if (mode !== 'table') {
+                SQL_KEYWORDS.forEach(kw => {
                     suggestions.push({
-                        label: schema.name,
-                        kind: monaco.languages.CompletionItemKind.Module,
-                        insertText: schema.name,
-                        detail: 'Schema',
+                        label: kw,
+                        kind: monaco.languages.CompletionItemKind.Keyword,
+                        insertText: kw,
                         range: range,
-                        sortText: '2_' + schema.name,
+                        sortText: '3_' + kw,
                     });
                 });
+            }
 
-                // Table/view names from all schemas
-                cache.schemas.forEach(schema => {
-                    schema.tables.forEach(table => {
-                        const isView = table.type === 'VIEW';
+            // Schema-aware suggestions (per-tab cache — #126 Phase D)
+            if (activeCache) {
+                const cache = activeCache;
+
+                if (mode !== 'column') {
+                    // Schema names
+                    cache.schemas.forEach(schema => {
                         suggestions.push({
-                            label: table.name,
-                            kind: isView ? monaco.languages.CompletionItemKind.Interface : monaco.languages.CompletionItemKind.Struct,
-                            insertText: table.name,
-                            detail: `${isView ? 'View' : 'Table'} (${schema.name})`,
+                            label: schema.name,
+                            kind: monaco.languages.CompletionItemKind.Module,
+                            insertText: schema.name,
+                            detail: 'Schema',
                             range: range,
-                            sortText: context.expectsTable ? '0_' + table.name : '1_' + table.name,
+                            sortText: '2_' + schema.name,
                         });
                     });
-                });
-
-                // Column names — prioritize if context expects columns, or always include for convenience
-                const contextTables = getTablesFromContext(textUntilPosition, cache);
-                if (contextTables.length > 0) {
-                    contextTables.forEach(({ table, alias, schema }) => {
-                        table.columns.forEach(col => {
+                    // Table/view names from all schemas
+                    cache.schemas.forEach(schema => {
+                        schema.tables.forEach(table => {
+                            const isView = table.type === 'VIEW';
                             suggestions.push({
-                                label: col.name,
-                                kind: monaco.languages.CompletionItemKind.Field,
-                                insertText: col.name,
-                                detail: `${col.typeName} — ${alias || table.name}`,
+                                label: table.name,
+                                kind: isView ? monaco.languages.CompletionItemKind.Interface : monaco.languages.CompletionItemKind.Struct,
+                                insertText: table.name,
+                                detail: `${isView ? 'View' : 'Table'} (${schema.name})`,
                                 range: range,
-                                sortText: context.expectsColumn ? '0_' + col.name : '1_' + col.name,
+                                sortText: mode === 'table' ? '0_' + table.name : '1_' + table.name,
                             });
                         });
                     });
                 }
+
+                if (mode !== 'table') {
+                    // Resolve referenced tables from the whole statement so aliases
+                    // declared in a later FROM/JOIN clause are recognized too.
+                    const contextTables = getTablesFromContext(model.getValue(), cache);
+                    if (contextTables.length > 0) {
+                        contextTables.forEach(({ table, alias, schema }) => {
+                            // Offer the alias itself as a completion (e.g. `a`) so
+                            // users can type `a` then `.` to trigger dot completion.
+                            if (alias && alias !== table.name) {
+                                suggestions.push({
+                                    label: alias,
+                                    kind: monaco.languages.CompletionItemKind.Variable,
+                                    insertText: alias,
+                                    detail: `Alias for ${schema}.${table.name}`,
+                                    range: range,
+                                    sortText: '0_' + alias,
+                                });
+                            }
+                            table.columns.forEach(col => {
+                                suggestions.push({
+                                    label: col.name,
+                                    kind: monaco.languages.CompletionItemKind.Field,
+                                    insertText: col.name,
+                                    detail: `${col.typeName} — ${alias || table.name}`,
+                                    range: range,
+                                    sortText: mode === 'column' ? '0_' + col.name : '1_' + col.name,
+                                });
+                            });
+                        });
+                    }
+                }
             }
 
-            // Snippet suggestions
-            if (state.snippetsCache) {
+            // Snippet suggestions (skip in table-only contexts)
+            if (mode !== 'table' && state.snippetsCache) {
                 state.snippetsCache.forEach(s => {
                     suggestions.push({
                         label: s.prefix,
@@ -504,8 +540,8 @@ async function loadSnippetsCache() {
 }
 
 function getDotCompletions(prefix, range, fullText) {
-    if (!state.autocompleteCache) return [];
-    const cache = state.autocompleteCache;
+    const cache = getAutocompleteCache(getActiveConnectionId());
+    if (!cache) return [];
     const suggestions = [];
 
     // Check if prefix is a schema name → suggest tables
@@ -744,6 +780,12 @@ function switchTab(id) {
     renderTabs();
     refreshConnectionIndicators(tab);
     try { refreshTreeConnectionBadges(); } catch (e) {}
+
+    // Warm the per-tab autocomplete cache so suggestions in this tab reflect
+    // this tab's connection, not whoever was last loaded. Non-blocking.
+    if (tab.connId) {
+        loadAutoCompleteCache(tab.connId).catch(() => {});
+    }
 }
 
 // Sync the status bar + toolbar connection badge with the tab's own connection.
@@ -899,7 +941,7 @@ function renderTabConnectionChip(tab) {
     const name = conn ? conn.name : (tab.connName || null);
     const color = conn?.properties?.color || '';
     const readonly = tab.type === 'erd';
-    const connected = conn && state.autocompleteCache?.connectionId === conn.id;
+    const connected = !!(conn && state.autocompleteCache.has(conn.id));
     const cls = 'tab-conn-chip' + (name ? ' has-conn' : ' no-conn') + (readonly ? ' readonly' : '');
     const style = color ? ` style="--chip-color:${escapeHtml(color)}"` : '';
 
@@ -1003,7 +1045,7 @@ function showTabConnectionMenu(tabId, anchorEl) {
         const items = (state.connections || []).filter(c => !q || c.name.toLowerCase().includes(q));
         items.forEach(conn => {
             const isSelected = tab.connId === conn.id;
-            const connected = state.autocompleteCache?.connectionId === conn.id;
+            const connected = state.autocompleteCache.has(conn.id);
             const color = conn.properties?.color || '';
             const item = document.createElement('div');
             item.className = 'tab-conn-menu-item' + (isSelected ? ' selected' : '');
@@ -2917,7 +2959,7 @@ async function handleContextAction(action) {
             break;
         case 'disconnect':
             await api.connections.disconnect(contextConn.id);
-            if (state.autocompleteCache?.connectionId === contextConn.id) clearAutoCompleteCache();
+            clearAutoCompleteCache(contextConn.id);
             detachConnectionFromTabs(contextConn.id);
             contextNode.classList.remove('expanded');
             contextNode.querySelector('.tree-children').innerHTML = '';
@@ -2939,7 +2981,7 @@ async function handleContextAction(action) {
         case 'delete':
             if (confirm(`Delete connection "${contextConn.name}"?`)) {
                 await api.connections.delete(contextConn.id);
-                if (state.autocompleteCache?.connectionId === contextConn.id) clearAutoCompleteCache();
+                clearAutoCompleteCache(contextConn.id);
                 detachConnectionFromTabs(contextConn.id);
                 await loadConnections();
             }
@@ -4856,7 +4898,7 @@ async function publishToConfluence() {
     const apiToken = prompt('API Token:');
     if (!apiToken) return;
 
-    const schema = state.autocompleteCache?.schemas?.[0]?.name || 'schema';
+    const schema = getAutocompleteCache(getActiveConnectionId())?.schemas?.[0]?.name || 'schema';
     try {
         const doc = await api.metadata.documentation(getActiveConnectionId(), schema);
         const content = doc.markdown.replace(/\n/g, '<br/>');
@@ -4895,7 +4937,7 @@ async function exportSchemaDoc() {
     const connId = getActiveConnectionId();
     if (!connId) { updateStatus('No connection', true); return; }
     // Find current schema from autocomplete cache
-    const schema = state.autocompleteCache?.schemas?.[0]?.name;
+    const schema = getAutocompleteCache(connId)?.schemas?.[0]?.name;
     if (!schema) { updateStatus('No schema detected. Connect and expand a schema first.', true); return; }
     try {
         updateStatus('Generating documentation...');
