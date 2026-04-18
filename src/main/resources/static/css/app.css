@@ -3361,3 +3361,260 @@ body[data-theme="light"] .rf-edge-label {
     color: var(--accent);
     background: var(--bg-hover);
 }
+
+/* ---- Inspector Tab (#100) ---- */
+.insp-root { padding: 0; }
+
+.insp-header {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-surface);
+}
+
+.insp-title {
+    font-size: 13px;
+    color: var(--text-secondary);
+    word-break: break-all;
+}
+
+.insp-title strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.insp-sub {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.insp-actions {
+    display: flex;
+    gap: 4px;
+    margin-top: 8px;
+}
+
+.insp-section {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.insp-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+}
+
+.insp-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.insp-table th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    padding: 4px 6px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.insp-table td {
+    padding: 4px 6px;
+    border-bottom: 1px solid var(--border-subtle);
+    vertical-align: top;
+    word-break: break-word;
+}
+
+.insp-table td:first-child {
+    width: 24px;
+}
+
+.insp-type {
+    color: var(--text-secondary);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+}
+
+.insp-nullable {
+    color: var(--text-muted);
+    font-size: 11px;
+    width: 48px;
+}
+
+.insp-pk {
+    display: inline-block;
+    font-size: 9px;
+    padding: 1px 4px;
+    background: var(--accent);
+    color: white;
+    border-radius: 3px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+
+.insp-badge {
+    display: inline-block;
+    font-size: 9px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+.insp-badge-uniq {
+    background: var(--warning, #d68f00);
+    color: white;
+}
+
+.insp-loading, .insp-empty-row {
+    padding: 16px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+/* ---- History Tab (#102) ---- */
+.hist-root {
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.hist-switcher {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-surface);
+    flex-shrink: 0;
+}
+
+.hist-section-btn {
+    background: transparent;
+    border: none;
+    padding: 4px 10px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all var(--transition, 0.15s ease);
+}
+
+.hist-section-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+}
+
+.hist-section-btn.active {
+    color: var(--text-primary);
+    background: var(--bg-elevated);
+    font-weight: 600;
+}
+
+.hist-refresh-btn {
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+}
+
+.hist-refresh-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+}
+
+.hist-list {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.hist-item {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-subtle);
+    cursor: pointer;
+    transition: background var(--transition, 0.15s ease);
+}
+
+.hist-item:hover {
+    background: var(--bg-hover);
+}
+
+.hist-item-name {
+    font-weight: 600;
+    font-size: 12px;
+    color: var(--text-primary);
+    margin-bottom: 2px;
+}
+
+.hist-item-sql {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    word-break: break-all;
+    line-height: 1.4;
+}
+
+.hist-item-meta {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+    font-size: 10px;
+    color: var(--text-muted);
+}
+
+.hist-item-error .hist-item-sql {
+    color: var(--error, #d46363);
+}
+
+.hist-loading, .hist-empty {
+    padding: 24px 16px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+/* ---- AI Chat Tab (#101) — overrides for embedded mode ---- */
+.grp-tab-pane.ai-chat-pane {
+    padding: 0;
+}
+
+.grp-tab-pane.ai-chat-pane.active {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.grp-tab-pane.ai-chat-pane .ai-chat-header {
+    position: static;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+.grp-tab-pane.ai-chat-pane .ai-chat-messages {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.grp-tab-pane.ai-chat-pane .ai-chat-input-area {
+    flex-shrink: 0;
+}
