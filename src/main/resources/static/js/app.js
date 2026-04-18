@@ -217,6 +217,7 @@ function setActiveTabConnection(connId, connName) {
     try { renderTabs(); } catch (e) {}
     try { refreshConnectionIndicators(t); } catch (e) {}
     try { refreshTreeConnectionBadges(); } catch (e) {}
+    try { refreshSessionsTabIfVisible(); } catch (e) {}
 }
 
 // ============================================================
@@ -313,6 +314,7 @@ function detachConnectionFromTabs(connId) {
     if (state.activeConnectionId === connId) state.activeConnectionId = null;
     try { saveEditorSession(); } catch (e) {}
     try { refreshTreeConnectionBadges(); } catch (e) {}
+    try { refreshSessionsTabIfVisible(); } catch (e) {}
 }
 
 // Refresh the tab-usage badge + active highlight on every connection tree node.
@@ -762,6 +764,7 @@ function addEditorTab() {
     renderTabs();
     switchTab(id);
     try { refreshTreeConnectionBadges(); } catch (e) {}
+    try { refreshSessionsTabIfVisible(); } catch (e) {}
 }
 
 // #127 Phase F — duplicate the active SQL tab (content + connection).
@@ -799,6 +802,7 @@ function duplicateActiveTab() {
     renderTabs();
     switchTab(id);
     try { refreshTreeConnectionBadges(); } catch (e) {}
+    try { refreshSessionsTabIfVisible(); } catch (e) {}
     updateStatus(`Duplicated tab: ${tab.name}`);
 }
 
@@ -914,6 +918,7 @@ function switchTab(id) {
     renderTabs();
     refreshConnectionIndicators(tab);
     try { refreshTreeConnectionBadges(); } catch (e) {}
+    try { refreshSessionsTabIfVisible(); } catch (e) {}
 
     // Warm the per-tab autocomplete cache so suggestions in this tab reflect
     // this tab's connection, not whoever was last loaded. Non-blocking.
@@ -965,6 +970,7 @@ function closeTab(id) {
     }
     renderTabs();
     try { refreshTreeConnectionBadges(); } catch (e) {}
+    try { refreshSessionsTabIfVisible(); } catch (e) {}
 }
 
 function renderTabs() {
@@ -1445,6 +1451,7 @@ function renderTree() {
 
     // Apply tab-usage badges + active highlight after rebuilding the tree
     try { refreshTreeConnectionBadges(); } catch (e) {}
+    try { refreshSessionsTabIfVisible(); } catch (e) {}
 }
 
 function createConnectionNode(conn) {
@@ -2164,6 +2171,15 @@ async function executeQuery(runAll = false) {
 
     const executionId = 'exec-' + Date.now();
     state.currentExecutionId = executionId;
+    // #137 Sessions tab — track current run so the Sessions panel can show it.
+    state.currentExecution = {
+        id: executionId,
+        connId,
+        tabId: state.activeEditorId,
+        sql,
+        startedAt: Date.now(),
+    };
+    try { refreshSessionsTabIfVisible(); } catch (e) {}
 
     updateStatus('Executing...');
     document.getElementById('btn-run').disabled = true;
@@ -2183,8 +2199,10 @@ async function executeQuery(runAll = false) {
         displayError(e.message);
     } finally {
         state.currentExecutionId = null;
+        state.currentExecution = null;
         document.getElementById('btn-run').disabled = false;
         showCancelButton(false);
+        try { refreshSessionsTabIfVisible(); } catch (e) {}
     }
 }
 
@@ -3373,6 +3391,242 @@ const RightPanel = (() => {
 
     return { init, registerTab, open, close, toggle, setActive, setWidth };
 })();
+
+// ============================================================
+// Sessions Tab (#137 Phase A)
+// Shows active DB connections, tab↔connection mapping, and the currently
+// running query. Driven entirely by `state`; lifecycle hooks in tab/query
+// code call refreshSessionsTabIfVisible() so the view stays current without
+// polling. A 1s tick is started only while the tab is mounted+visible, for
+// the "elapsed" counter in Running Queries.
+// ============================================================
+const SessionsTab = (() => {
+    let root = null;
+    let tickTimer = null;
+
+    function isActiveRightPanelTab() {
+        if (!root) return false;
+        const pane = root.closest('.grp-tab-pane');
+        return !!(pane && pane.classList.contains('active'));
+    }
+
+    function connectionStatus(connId) {
+        return state.autocompleteCache && state.autocompleteCache.has(connId) ? 'connected' : 'idle';
+    }
+
+    function countTabsUsing(connId) {
+        if (!connId) return 0;
+        return state.editors.filter(t => t.connId === connId).length;
+    }
+
+    function truncate(s, n) {
+        if (!s) return '';
+        const t = s.replace(/\s+/g, ' ').trim();
+        return t.length > n ? t.slice(0, n - 1) + '…' : t;
+    }
+
+    function formatElapsed(ms) {
+        if (ms < 1000) return ms + 'ms';
+        const s = Math.floor(ms / 1000);
+        if (s < 60) return s + 's';
+        const m = Math.floor(s / 60);
+        return m + 'm ' + (s % 60) + 's';
+    }
+
+    // Tree: each connection row is expandable; children = tabs using it.
+    // Collapsed state persists across reloads (inverted store — missing = expanded).
+    const LS_COLLAPSED = 'dbee.sess.collapsed';
+    function loadCollapsed() {
+        try { return new Set(JSON.parse(localStorage.getItem(LS_COLLAPSED) || '[]')); }
+        catch (e) { return new Set(); }
+    }
+    function saveCollapsed(set) {
+        try { localStorage.setItem(LS_COLLAPSED, JSON.stringify([...set])); } catch (e) {}
+    }
+
+    function renderTabChild(tab) {
+        const isActive = tab.id === state.activeEditorId ? ' sess-tab-active' : '';
+        const typeIcon = tab.type === 'erd' ? '📊 ' : '';
+        const dirty = tab.dirty ? '<span class="sess-dirty">●</span>' : '';
+        return `
+            <div class="sess-row sess-tab-child${isActive}" data-tab-id="${escapeHtml(tab.id)}">
+                <span class="sess-row-name" title="${escapeHtml(tab.name)}">${typeIcon}${escapeHtml(tab.name)}${dirty}</span>
+            </div>`;
+    }
+
+    function renderActiveConnections() {
+        const collapsed = loadCollapsed();
+        const items = [];
+
+        (state.connections || []).forEach(conn => {
+            const status = connectionStatus(conn.id);
+            const count = countTabsUsing(conn.id);
+            const color = conn.properties?.color || '';
+            const colorStyle = color ? ` style="--row-color:${escapeHtml(color)}"` : '';
+            const dbType = conn.databaseType || conn.dbType || '';
+            const isCollapsed = collapsed.has(conn.id);
+            const canExpand = count > 0;
+            const arrow = canExpand
+                ? `<span class="sess-arrow${isCollapsed ? '' : ' expanded'}" data-action="toggle" data-id="${escapeHtml(conn.id)}" title="${isCollapsed ? 'Expand' : 'Collapse'}">▶</span>`
+                : `<span class="sess-arrow sess-arrow-empty">·</span>`;
+            const badge = count >= 1
+                ? `<span class="sess-badge sess-badge-count" title="${count} tab(s) use this">×${count}</span>`
+                : '';
+            const statusDot = `<span class="sess-dot sess-dot-${status}" title="${status}"></span>`;
+            const actionBtn = status === 'connected'
+                ? `<button class="sess-btn-mini" data-action="disconnect" data-id="${escapeHtml(conn.id)}" title="Disconnect">Disconnect</button>`
+                : `<button class="sess-btn-mini" data-action="connect" data-id="${escapeHtml(conn.id)}" title="Connect & assign to current tab">Connect</button>`;
+
+            items.push(`
+                <div class="sess-row sess-conn-row"${colorStyle} data-id="${escapeHtml(conn.id)}">
+                    ${arrow}
+                    ${statusDot}
+                    <span class="sess-row-name" title="${escapeHtml(conn.name)}">${escapeHtml(conn.name)}</span>
+                    <span class="sess-row-sub">${escapeHtml(dbType)}</span>
+                    ${badge}
+                    ${actionBtn}
+                </div>`);
+
+            if (canExpand && !isCollapsed) {
+                const kids = state.editors.filter(t => t.connId === conn.id).map(renderTabChild).join('');
+                items.push(`<div class="sess-children" data-parent="${escapeHtml(conn.id)}">${kids}</div>`);
+            }
+        });
+
+        // Tabs without any assigned connection, grouped at the bottom.
+        const unassigned = (state.editors || []).filter(t => !t.connId);
+        if (unassigned.length > 0) {
+            const isCollapsed = collapsed.has('__unassigned__');
+            const arrow = `<span class="sess-arrow${isCollapsed ? '' : ' expanded'}" data-action="toggle" data-id="__unassigned__" title="${isCollapsed ? 'Expand' : 'Collapse'}">▶</span>`;
+            items.push(`
+                <div class="sess-row sess-conn-row sess-conn-unassigned">
+                    ${arrow}
+                    <span class="sess-dot sess-dot-idle"></span>
+                    <span class="sess-row-name">(Unassigned)</span>
+                    <span class="sess-badge sess-badge-count">×${unassigned.length}</span>
+                </div>`);
+            if (!isCollapsed) {
+                const kids = unassigned.map(renderTabChild).join('');
+                items.push(`<div class="sess-children" data-parent="__unassigned__">${kids}</div>`);
+            }
+        }
+
+        return items.length ? items.join('') : `<div class="sess-empty">No connections registered</div>`;
+    }
+
+    function renderRunning() {
+        const e = state.currentExecution;
+        if (!e) return `<div class="sess-empty">No query running</div>`;
+        const conn = e.connId ? state.connections.find(c => c.id === e.connId) : null;
+        const tab = state.editors.find(t => t.id === e.tabId);
+        const elapsed = formatElapsed(Date.now() - e.startedAt);
+        return `
+            <div class="sess-row sess-running-row">
+                <span class="sess-dot sess-dot-running" title="running"></span>
+                <div class="sess-running-body">
+                    <div class="sess-running-meta">
+                        <span class="sess-running-conn">${escapeHtml(conn ? conn.name : '(unknown conn)')}</span>
+                        <span class="sess-running-tab">${escapeHtml(tab ? tab.name : '(closed tab)')}</span>
+                        <span class="sess-running-elapsed" data-elapsed>${elapsed}</span>
+                    </div>
+                    <code class="sess-running-sql">${escapeHtml(truncate(e.sql, 120))}</code>
+                </div>
+                <button class="sess-btn-mini sess-btn-cancel" data-action="cancel" data-id="${escapeHtml(e.id)}">Cancel</button>
+            </div>`;
+    }
+
+    function render(el) {
+        root = el;
+        el.innerHTML = `
+            <div class="sess-panel">
+                <section class="sess-section" data-section="active">
+                    <div class="sess-section-title">Connections</div>
+                    <div class="sess-section-body" data-body="active">${renderActiveConnections()}</div>
+                </section>
+                <section class="sess-section" data-section="running">
+                    <div class="sess-section-title">Running Queries</div>
+                    <div class="sess-section-body" data-body="running">${renderRunning()}</div>
+                </section>
+            </div>`;
+        bindDelegatedHandlers(el);
+        startTickIfNeeded();
+    }
+
+    function bindDelegatedHandlers(el) {
+        el.onclick = async (ev) => {
+            // Expand/collapse arrow (handled before button so arrow doesn't fall through)
+            const arrow = ev.target.closest('.sess-arrow[data-action="toggle"]');
+            if (arrow) {
+                ev.stopPropagation();
+                const id = arrow.dataset.id;
+                const collapsed = loadCollapsed();
+                if (collapsed.has(id)) collapsed.delete(id); else collapsed.add(id);
+                saveCollapsed(collapsed);
+                refresh();
+                return;
+            }
+            // Child tab row click → switch to that tab
+            const child = ev.target.closest('.sess-tab-child');
+            if (child && !ev.target.closest('button')) {
+                switchTab(child.dataset.tabId);
+                return;
+            }
+            const btn = ev.target.closest('button[data-action]');
+            if (!btn) return;
+            ev.stopPropagation();
+            const action = btn.dataset.action;
+            const id = btn.dataset.id;
+            if (action === 'disconnect') {
+                try {
+                    await api.connections.disconnect(id);
+                    clearAutoCompleteCache(id);
+                    detachConnectionFromTabs(id);
+                    refresh();
+                    updateStatus('Disconnected');
+                } catch (e) { updateStatus('Disconnect failed: ' + e.message, true); }
+            } else if (action === 'connect') {
+                const conn = state.connections.find(c => c.id === id);
+                if (conn) { await pickConnectionForActiveTab(conn.id); refresh(); }
+            } else if (action === 'cancel') {
+                cancelQuery(id);
+            }
+        };
+    }
+
+    function refresh() {
+        if (!root) return;
+        const a = root.querySelector('[data-body="active"]');
+        const r = root.querySelector('[data-body="running"]');
+        if (a) a.innerHTML = renderActiveConnections();
+        if (r) r.innerHTML = renderRunning();
+        startTickIfNeeded();
+    }
+
+    function startTickIfNeeded() {
+        stopTick();
+        if (!state.currentExecution) return;
+        if (!isActiveRightPanelTab()) return;
+        tickTimer = setInterval(() => {
+            if (!state.currentExecution) { stopTick(); return; }
+            if (!root) { stopTick(); return; }
+            const el = root.querySelector('[data-elapsed]');
+            if (el) el.textContent = formatElapsed(Date.now() - state.currentExecution.startedAt);
+        }, 1000);
+    }
+
+    function stopTick() {
+        if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+    }
+
+    return { render, refresh };
+})();
+
+// Lifecycle helper — called from tab/connection/query mutation sites so the
+// Sessions panel stays current whenever its pane is mounted.
+function refreshSessionsTabIfVisible() {
+    if (typeof SessionsTab === 'undefined') return;
+    try { SessionsTab.refresh(); } catch (e) {}
+}
 
 // ============================================================
 // Helper: insert SQL into current SQL editor (or open new tab if ERD active)
@@ -6217,6 +6471,14 @@ document.addEventListener('DOMContentLoaded', () => {
         tooltip: 'Query History & Saved Queries',
         icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
         render: (el) => HistoryTab.render(el),
+    });
+    // #137 Sessions tab — connections, tab↔conn map, running queries.
+    RightPanel.registerTab({
+        id: 'sessions',
+        label: 'Sessions',
+        tooltip: 'Sessions — active connections, tab mapping, running queries',
+        icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>',
+        render: (el) => SessionsTab.render(el),
     });
     initMonaco();
     loadConnections();
