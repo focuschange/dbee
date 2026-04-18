@@ -104,4 +104,8 @@ public class ConnectionService {
         if (tunnelId == null || tunnelId.isBlank()) return false;
         return connectionManager.getSshTunnelManager().isTunnelActive(tunnelId);
     }
+
+    public java.util.List<java.util.Map<String, Object>> getPoolStats() {
+        return connectionManager.collectPoolStats();
+    }
 }

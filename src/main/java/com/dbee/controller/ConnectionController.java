@@ -73,4 +73,10 @@ public class ConnectionController {
                 "sshTunnel", connectionService.isSshTunnelActive(id)
         );
     }
+
+    // #138 — Sessions tab Pool Stats
+    @GetMapping("/pool-stats")
+    public List<Map<String, Object>> poolStats() {
+        return connectionService.getPoolStats();
+    }
 }

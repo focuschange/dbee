@@ -11,6 +11,9 @@ import org.slf4j.LoggerFactory;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
@@ -97,6 +100,39 @@ public class ConnectionManager {
         esClients.clear();
         sshTunnelManager.closeAll();
         log.info("All connection pools and SSH tunnels closed");
+    }
+
+    /**
+     * #138 — snapshot HikariCP metrics for every currently-open JDBC pool.
+     * ElasticSearch clients and connections that never opened are omitted.
+     * Any per-pool failure is swallowed so one bad pool can't mask the rest.
+     */
+    public List<Map<String, Object>> collectPoolStats() {
+        List<Map<String, Object>> out = new ArrayList<>();
+        pools.forEach((id, ds) -> {
+            try {
+                if (ds == null || ds.isClosed()) return;
+                var mx = ds.getHikariPoolMXBean();
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("connectionId", id);
+                if (mx != null) {
+                    row.put("active", mx.getActiveConnections());
+                    row.put("idle", mx.getIdleConnections());
+                    row.put("total", mx.getTotalConnections());
+                    row.put("awaiting", mx.getThreadsAwaitingConnection());
+                } else {
+                    row.put("active", 0);
+                    row.put("idle", 0);
+                    row.put("total", 0);
+                    row.put("awaiting", 0);
+                }
+                row.put("maxPoolSize", ds.getMaximumPoolSize());
+                out.add(row);
+            } catch (Exception e) {
+                log.debug("Pool stats unavailable for {}: {}", id, e.getMessage());
+            }
+        });
+        return out;
     }
 
     public boolean isConnected(String connectionId) {
