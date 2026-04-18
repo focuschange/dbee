@@ -191,6 +191,45 @@ let toastuiEditor = null;
 let editorCounter = 0;
 
 // ============================================================
+// Active tab / connection helpers (#123 Phase A)
+// Each editor tab owns its own connection (tab.connId). These helpers
+// provide a single read/write surface so callers no longer touch the
+// legacy `state.activeConnectionId` global.
+// ============================================================
+function getActiveTab() {
+    return state.editors.find(e => e.id === state.activeEditorId) || null;
+}
+
+function getActiveConnectionId() {
+    const t = getActiveTab();
+    return t && t.connId ? t.connId : null;
+}
+
+function setActiveTabConnection(connId, connName) {
+    const t = getActiveTab();
+    if (!t) return;
+    t.connId = connId || null;
+    t.connName = connName || null;
+    // Keep the legacy global in sync so code paths that still read it
+    // (e.g. Phase A intermediate state) behave identically.
+    state.activeConnectionId = t.connId;
+    try { saveEditorSession(); } catch (e) {}
+}
+
+// Clear any tab (SQL or ERD) still referencing a connection that went away.
+function detachConnectionFromTabs(connId) {
+    if (!connId) return;
+    for (const t of state.editors) {
+        if (t.connId === connId) {
+            t.connId = null;
+            t.connName = null;
+        }
+    }
+    if (state.activeConnectionId === connId) state.activeConnectionId = null;
+    try { saveEditorSession(); } catch (e) {}
+}
+
+// ============================================================
 // Monaco Editor
 // ============================================================
 function initMonaco() {
@@ -548,7 +587,13 @@ function addEditorTab() {
     editorCounter++;
     const id = 'tab-' + editorCounter;
     const model = monaco.editor.createModel('', 'sql');
-    const tab = { id, type: 'sql', name: 'Query ' + editorCounter, model, savedContent: '' };
+    // New SQL tabs inherit the connection from the currently active tab
+    // so the user can keep querying the same DB without re-selecting.
+    const prev = getActiveTab();
+    const inheritedConnId = prev && prev.connId ? prev.connId : (state.activeConnectionId || null);
+    const inheritedConnName = prev && prev.connName ? prev.connName : null;
+    const tab = { id, type: 'sql', name: 'Query ' + editorCounter, model, savedContent: '',
+                  connId: inheritedConnId, connName: inheritedConnName };
     // Track dirty state
     model.onDidChangeContent(() => {
         tab.dirty = model.getValue() !== tab.savedContent;
@@ -591,7 +636,8 @@ function saveEditorSession() {
                          connId: t.connId, connName: t.connName, schema: t.schema };
             }
             return { id: t.id, type: 'sql', name: t.name,
-                     content: t.model ? t.model.getValue() : '' };
+                     content: t.model ? t.model.getValue() : '',
+                     connId: t.connId || null, connName: t.connName || null };
         });
         localStorage.setItem('dbee-editor-session', JSON.stringify({
             tabs: session, activeId: state.activeEditorId, counter: editorCounter
@@ -613,7 +659,8 @@ function restoreEditorSession() {
                 state.editors.push(tab);
             } else {
                 const model = monaco.editor.createModel(t.content || '', 'sql');
-                const tab = { id: t.id, type: 'sql', name: t.name, model, savedContent: t.content || '' };
+                const tab = { id: t.id, type: 'sql', name: t.name, model, savedContent: t.content || '',
+                              connId: t.connId || null, connName: t.connName || null };
                 model.onDidChangeContent(() => {
                     tab.dirty = model.getValue() !== tab.savedContent;
                     renderTabs();
@@ -634,6 +681,11 @@ function switchTab(id) {
     const tab = state.editors.find(e => e.id === id);
     if (!tab) { renderTabs(); return; }
 
+    // Phase A: mirror the new tab's connection into the legacy global so
+    // visual cues (tree highlight, status bar) remain consistent until
+    // Phase B's UI changes land.
+    state.activeConnectionId = tab.connId || null;
+
     const editorContainer = document.getElementById('editor-container');
     const erdView = document.getElementById('erd-view');
 
@@ -653,6 +705,29 @@ function switchTab(id) {
         if (monacoEditor && tab.model) monacoEditor.setModel(tab.model);
     }
     renderTabs();
+    refreshConnectionIndicators(tab);
+}
+
+// Sync the status bar + toolbar connection badge with the tab's own connection.
+// Called on tab switch so the UI reflects per-tab state instead of the legacy global.
+function refreshConnectionIndicators(tab) {
+    const conn = tab && tab.connId
+        ? state.connections.find(c => c.id === tab.connId)
+        : null;
+    const name = conn ? conn.name : (tab && tab.connName) || '';
+    if (name) {
+        updateStatus(`Connected: ${name}`);
+    } else {
+        const connEl = document.getElementById('status-connection');
+        const dot = document.getElementById('status-dot');
+        const badge = document.getElementById('toolbar-conn-badge');
+        const badgeDot = badge ? badge.querySelector('.badge-dot') : null;
+        const badgeText = badge ? badge.querySelector('.badge-text') : null;
+        if (connEl) connEl.textContent = 'Not connected';
+        if (dot) dot.className = 'status-indicator';
+        if (badgeDot) badgeDot.classList.remove('connected');
+        if (badgeText) badgeText.textContent = 'No connection';
+    }
 }
 
 function closeTab(id) {
@@ -916,7 +991,10 @@ const SVG_EYE_OFF = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none"
 let showHiddenSchemas = false;
 
 async function activateConnection(conn, node) {
-    state.activeConnectionId = conn.id;
+    // Phase A: assign the selected connection to the currently active editor tab.
+    // `setActiveTabConnection` also mirrors to `state.activeConnectionId` for
+    // back-compat with any intermediate callers that still read the global.
+    setActiveTabConnection(conn.id, conn.name);
     updateStatus(`Connecting to ${conn.name}...`);
 
     try {
@@ -1536,7 +1614,8 @@ async function showTableIndexes(connId, schema, tableName) {
 // Query Execution
 // ============================================================
 async function executeQuery(runAll = false) {
-    if (!state.activeConnectionId) {
+    const connId = getActiveConnectionId();
+    if (!connId) {
         updateStatus('No active connection. Double-click a connection in the tree.', true);
         return;
     }
@@ -1554,8 +1633,8 @@ async function executeQuery(runAll = false) {
     showCancelButton(true, executionId);
 
     try {
-        const results = await api.query.execute(state.activeConnectionId, sql, 1000, executionId);
-        state.lastResult = { connectionId: state.activeConnectionId, sql };
+        const results = await api.query.execute(connId, sql, 1000, executionId);
+        state.lastResult = { connectionId: connId, sql };
         // Multi-query: results is an array
         if (Array.isArray(results) && results.length > 1) {
             displayMultiResult(results);
@@ -1619,7 +1698,8 @@ function formatSql() {
 }
 
 async function executeExplain(analyze = false) {
-    if (!state.activeConnectionId) {
+    const connId = getActiveConnectionId();
+    if (!connId) {
         updateStatus('No active connection. Double-click a connection in the tree.', true);
         return;
     }
@@ -1634,8 +1714,8 @@ async function executeExplain(analyze = false) {
     document.getElementById('btn-run').disabled = true;
 
     try {
-        const result = await api.query.explain(state.activeConnectionId, sql, analyze);
-        state.lastResult = { connectionId: state.activeConnectionId, sql, explain: true };
+        const result = await api.query.explain(connId, sql, analyze);
+        state.lastResult = { connectionId: connId, sql, explain: true };
         displayResult(result, label);
     } catch (e) {
         displayError(e.message);
@@ -1654,7 +1734,7 @@ function displayResult(result, resultLabel) {
         const sql = state.lastResult?.sql || getCurrentSql();
         container.innerHTML = `<div class="result-error">
             <div class="result-error-msg">${escapeHtml(result.errorMessage)}</div>
-            ${state.activeConnectionId ? `<button class="btn btn-ghost btn-sm ai-fix-btn">
+            ${getActiveConnectionId() ? `<button class="btn btn-ghost btn-sm ai-fix-btn">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 2.8 4 6 4 6s4-3.2 4-6a4 4 0 0 0-4-4z"/><circle cx="12" cy="6" r="1.5"/></svg>
                 Ask AI to Fix
             </button>` : ''}
@@ -1703,7 +1783,7 @@ function displayResult(result, resultLabel) {
 
     applyFilterAndSort();
 
-    const conn = state.connections.find(c => c.id === state.activeConnectionId);
+    const conn = state.connections.find(c => c.id === getActiveConnectionId());
     updateStatus(`Connected: ${conn ? conn.name : ''}`, false, result.rows.length, result.executionTimeMs);
 }
 
@@ -2171,9 +2251,10 @@ async function performCellUpdate(rowIdx, colIdx, newValue) {
     const { tableName, schemaName, columnNames } = state.resultData;
     if (!tableName) throw new Error('Table name not available');
 
+    const connId = getActiveConnectionId();
     // Get primary keys (cached)
     if (!state.primaryKeyCache) {
-        const pks = await api.metadata.primaryKeys(state.activeConnectionId, schemaName, tableName);
+        const pks = await api.metadata.primaryKeys(connId, schemaName, tableName);
         if (!pks || pks.length === 0) throw new Error('No primary key found for table ' + tableName);
         state.primaryKeyCache = pks.map(pk => pk.columnName);
     }
@@ -2190,7 +2271,7 @@ async function performCellUpdate(rowIdx, colIdx, newValue) {
     }
 
     const column = columnNames[colIdx];
-    return await api.query.updateCell(state.activeConnectionId, schemaName, tableName, primaryKeys, column, newValue);
+    return await api.query.updateCell(connId, schemaName, tableName, primaryKeys, column, newValue);
 }
 
 async function addNewRow() {
@@ -2203,7 +2284,7 @@ async function addNewRow() {
         values[col] = val === '' ? null : val;
     }
     try {
-        const result = await api.query.insertRow(state.activeConnectionId, schemaName, tableName, values);
+        const result = await api.query.insertRow(getActiveConnectionId(), schemaName, tableName, values);
         if (result.error) {
             updateStatus('Insert failed: ' + result.errorMessage, true);
         } else {
@@ -2226,9 +2307,10 @@ async function deleteSelectedRow() {
     const row = state.resultData.rows[rowIdx];
     if (!row) return;
 
+    const connId = getActiveConnectionId();
     // Get PKs
     if (!state.primaryKeyCache) {
-        const pks = await api.metadata.primaryKeys(state.activeConnectionId, schemaName, tableName);
+        const pks = await api.metadata.primaryKeys(connId, schemaName, tableName);
         if (!pks || pks.length === 0) { updateStatus('No primary key found', true); return; }
         state.primaryKeyCache = pks.map(pk => pk.columnName);
     }
@@ -2240,7 +2322,7 @@ async function deleteSelectedRow() {
     }
 
     try {
-        const result = await api.query.deleteRow(state.activeConnectionId, schemaName, tableName, primaryKeys);
+        const result = await api.query.deleteRow(connId, schemaName, tableName, primaryKeys);
         if (result.error) {
             updateStatus('Delete failed: ' + result.errorMessage, true);
         } else {
@@ -2266,7 +2348,7 @@ async function askAiToFix(errorMsg) {
     resultDiv.innerHTML = '<span class="ai-loading-dots">AI is analyzing<span>...</span></span>';
 
     try {
-        const result = await api.llm.fixSql(state.activeConnectionId, sql, error);
+        const result = await api.llm.fixSql(getActiveConnectionId(), sql, error);
 
         if (result.error) {
             resultDiv.className = 'ai-fix-result ai-fix-error';
@@ -2313,7 +2395,7 @@ function displayError(msg) {
     const sql = getCurrentSql();
     container.innerHTML = `<div class="result-error">
         <div class="result-error-msg">${escapeHtml(msg)}</div>
-        ${state.activeConnectionId ? `<button class="btn btn-ghost btn-sm ai-fix-btn">
+        ${getActiveConnectionId() ? `<button class="btn btn-ghost btn-sm ai-fix-btn">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 2.8 4 6 4 6s4-3.2 4-6a4 4 0 0 0-4-4z"/><circle cx="12" cy="6" r="1.5"/></svg>
             Ask AI to Fix
         </button>` : ''}
@@ -2477,10 +2559,8 @@ async function handleContextAction(action) {
             break;
         case 'disconnect':
             await api.connections.disconnect(contextConn.id);
-            if (state.activeConnectionId === contextConn.id) {
-                state.activeConnectionId = null;
-                clearAutoCompleteCache();
-            }
+            if (state.autocompleteCache?.connectionId === contextConn.id) clearAutoCompleteCache();
+            detachConnectionFromTabs(contextConn.id);
             contextNode.classList.remove('expanded');
             contextNode.querySelector('.tree-children').innerHTML = '';
             updateStatus('Disconnected');
@@ -2501,10 +2581,8 @@ async function handleContextAction(action) {
         case 'delete':
             if (confirm(`Delete connection "${contextConn.name}"?`)) {
                 await api.connections.delete(contextConn.id);
-                if (state.activeConnectionId === contextConn.id) {
-                    state.activeConnectionId = null;
-                    clearAutoCompleteCache();
-                }
+                if (state.autocompleteCache?.connectionId === contextConn.id) clearAutoCompleteCache();
+                detachConnectionFromTabs(contextConn.id);
                 await loadConnections();
             }
             break;
@@ -2515,7 +2593,7 @@ async function handleContextAction(action) {
 // Export
 // ============================================================
 async function exportData(format) {
-    if (!state.activeConnectionId || !state.lastResult) {
+    if (!getActiveConnectionId() || !state.lastResult) {
         updateStatus('No query result to export', true);
         return;
     }
@@ -4312,9 +4390,10 @@ function initCommandPalette() {
 }
 
 async function executeTxn(cmd) {
-    if (!state.activeConnectionId) { updateStatus('No active connection', true); return; }
+    const connId = getActiveConnectionId();
+    if (!connId) { updateStatus('No active connection', true); return; }
     try {
-        const results = await api.query.execute(state.activeConnectionId, cmd, 1);
+        const results = await api.query.execute(connId, cmd, 1);
         const r = Array.isArray(results) ? results[0] : results;
         if (r && r.error) updateStatus(`${cmd} failed: ${r.errorMessage}`, true);
         else updateStatus(`${cmd} executed`);
@@ -4324,12 +4403,13 @@ async function executeTxn(cmd) {
 async function aiAlterSchema() {
     const desc = prompt('Describe the schema change in natural language:\n(e.g. "Add an email column to users table")');
     if (!desc) return;
-    if (!state.activeConnectionId) { updateStatus('No active connection', true); return; }
+    const connId = getActiveConnectionId();
+    if (!connId) { updateStatus('No active connection', true); return; }
     toggleAiChatPanel();
     appendChatMessage('user', `Alter schema: ${desc}`);
     const lm = appendChatMessage('loading', '');
     try {
-        const r = await api.llm.alterSql(state.activeConnectionId, desc);
+        const r = await api.llm.alterSql(connId, desc);
         lm.remove();
         appendChatMessage(r.error ? 'error' : 'assistant', r.message, r.sql);
     } catch (e) { lm.remove(); appendChatMessage('error', e.message); }
@@ -4342,7 +4422,7 @@ async function aiIndexHint() {
     appendChatMessage('user', `Suggest indexes for:\n${sql}`);
     const loadingMsg = appendChatMessage('loading', '');
     try {
-        const result = await api.llm.indexHint(state.activeConnectionId, sql);
+        const result = await api.llm.indexHint(getActiveConnectionId(), sql);
         loadingMsg.remove();
         if (result.error) appendChatMessage('error', result.message);
         else appendChatMessage('assistant', result.message, result.sql);
@@ -4353,11 +4433,12 @@ async function aiIndexHint() {
 // Dashboard (#77) - saved query + chart combos
 // ============================================================
 function showDashboard() {
-    if (!state.activeConnectionId) { updateStatus('Connect to a database first', true); return; }
+    const connId = getActiveConnectionId();
+    if (!connId) { updateStatus('Connect to a database first', true); return; }
     toggleAiChatPanel();
     appendChatMessage('user', 'Create a dashboard summary for this database');
     const lm = appendChatMessage('loading', '');
-    api.llm.chat(state.activeConnectionId, 'Give me 3-5 useful dashboard queries for this database: row counts per table, recent activity, data distributions. Return each as a SQL query in a code block.')
+    api.llm.chat(connId, 'Give me 3-5 useful dashboard queries for this database: row counts per table, recent activity, data distributions. Return each as a SQL query in a code block.')
         .then(r => { lm.remove(); appendChatMessage(r.error ? 'error' : 'assistant', r.message, r.sql); })
         .catch(e => { lm.remove(); appendChatMessage('error', e.message); });
 }
@@ -4412,7 +4493,7 @@ async function publishToConfluence() {
 
     const schema = state.autocompleteCache?.schemas?.[0]?.name || 'schema';
     try {
-        const doc = await api.metadata.documentation(state.activeConnectionId, schema);
+        const doc = await api.metadata.documentation(getActiveConnectionId(), schema);
         const content = doc.markdown.replace(/\n/g, '<br/>');
         const result = await api.request('POST', '/api/integration/confluence/publish', {
             baseUrl, spaceKey, title: `DBee Schema: ${schema}`, content, email, apiToken
@@ -4446,13 +4527,14 @@ async function createJiraIssue() {
 }
 
 async function exportSchemaDoc() {
-    if (!state.activeConnectionId) { updateStatus('No connection', true); return; }
+    const connId = getActiveConnectionId();
+    if (!connId) { updateStatus('No connection', true); return; }
     // Find current schema from autocomplete cache
     const schema = state.autocompleteCache?.schemas?.[0]?.name;
     if (!schema) { updateStatus('No schema detected. Connect and expand a schema first.', true); return; }
     try {
         updateStatus('Generating documentation...');
-        const result = await api.metadata.documentation(state.activeConnectionId, schema);
+        const result = await api.metadata.documentation(connId, schema);
         const blob = new Blob([result.markdown], { type: 'text/markdown' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
@@ -4464,7 +4546,7 @@ async function exportSchemaDoc() {
 }
 
 function showProcessList() {
-    if (!state.activeConnectionId) { updateStatus('No connection', true); return; }
+    if (!getActiveConnectionId()) { updateStatus('No connection', true); return; }
     if (monacoEditor) {
         monacoEditor.setValue('SHOW PROCESSLIST;');
         executeQuery();
@@ -4472,7 +4554,7 @@ function showProcessList() {
 }
 
 function showDbStatus() {
-    if (!state.activeConnectionId) { updateStatus('No connection', true); return; }
+    if (!getActiveConnectionId()) { updateStatus('No connection', true); return; }
     if (monacoEditor) {
         monacoEditor.setValue(`-- DB Status Overview
 SHOW GLOBAL STATUS WHERE Variable_name IN ('Connections', 'Threads_connected', 'Threads_running', 'Questions', 'Slow_queries', 'Uptime');
@@ -4637,7 +4719,7 @@ function importConnections() {
 // Data Import
 // ============================================================
 function showImportDialog() {
-    if (!state.activeConnectionId) { updateStatus('No active connection', true); return; }
+    if (!getActiveConnectionId()) { updateStatus('No active connection', true); return; }
     document.getElementById('import-dialog').style.display = 'flex';
     document.getElementById('import-result').style.display = 'none';
     document.getElementById('import-type').onchange = () => {
@@ -4652,7 +4734,7 @@ async function executeImport() {
     if (!fileInput.files.length) { updateStatus('No file selected', true); return; }
 
     const formData = new FormData();
-    formData.append('connectionId', state.activeConnectionId);
+    formData.append('connectionId', getActiveConnectionId());
     formData.append('file', fileInput.files[0]);
     if (type === 'csv') {
         const table = document.getElementById('import-table').value.trim();
@@ -4782,7 +4864,7 @@ async function aiOptimizeSql() {
     appendChatMessage('user', `Optimize this SQL:\n${sql}`);
     const loadingMsg = appendChatMessage('loading', '');
     try {
-        const result = await api.llm.optimizeSql(state.activeConnectionId, sql);
+        const result = await api.llm.optimizeSql(getActiveConnectionId(), sql);
         loadingMsg.remove();
         if (result.error) appendChatMessage('error', result.message);
         else appendChatMessage('assistant', result.message, result.sql);
@@ -4966,7 +5048,8 @@ async function sendAiChatMessage() {
     const message = input.value.trim();
     if (!message) return;
 
-    if (!state.activeConnectionId) {
+    const connId = getActiveConnectionId();
+    if (!connId) {
         appendChatMessage('error', 'No active connection. Connect to a database first.');
         return;
     }
@@ -4980,7 +5063,7 @@ async function sendAiChatMessage() {
 
     const payload = (typeof aiLanguageInstruction === 'function' ? aiLanguageInstruction() : '') + message;
     try {
-        const result = await api.llm.chat(state.activeConnectionId, payload);
+        const result = await api.llm.chat(connId, payload);
         loadingMsg.remove();
 
         if (result.error) {
