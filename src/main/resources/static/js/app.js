@@ -219,6 +219,88 @@ function setActiveTabConnection(connId, connName) {
     try { refreshTreeConnectionBadges(); } catch (e) {}
 }
 
+// ============================================================
+// Per-tab result panel snapshot (#128 Phase E)
+// Each SQL tab keeps its last query output (DOM + state) so switching
+// tabs restores the matching result view instead of wiping it.
+// ============================================================
+let _emptyResultPanelHtml = null; // initialized on first capture
+
+function _getResultRoots() {
+    return {
+        content: document.getElementById('result-content'),
+        filterWrap: document.getElementById('result-filter-wrap'),
+        filterInput: document.getElementById('result-filter-input'),
+        headerLabel: document.querySelector('#result-header > span:first-of-type'),
+    };
+}
+
+function _initEmptyResultPanelHtmlOnce() {
+    if (_emptyResultPanelHtml !== null) return;
+    const { content } = _getResultRoots();
+    _emptyResultPanelHtml = content ? content.innerHTML : '';
+}
+
+function captureResultPanelToTab(tab) {
+    if (!tab || tab.type !== 'sql') return;
+    const { content, filterWrap, filterInput, headerLabel } = _getResultRoots();
+    if (!content) return;
+
+    // Move the DOM children into a DocumentFragment to preserve event handlers.
+    const fragment = document.createDocumentFragment();
+    while (content.firstChild) fragment.appendChild(content.firstChild);
+
+    tab.resultState = {
+        domFragment: fragment,
+        filterWrapVisible: filterWrap ? filterWrap.style.display !== 'none' : false,
+        filterInputValue: filterInput ? filterInput.value : '',
+        headerLabel: headerLabel ? headerLabel.textContent : 'Results',
+        resultData: state.resultData || null,
+        sortState: state.sortState ? { ...state.sortState } : null,
+        filterKeyword: state.filterKeyword || '',
+        lastResult: state.lastResult ? { ...state.lastResult } : null,
+        lastError: state.lastError ? { ...state.lastError } : null,
+        primaryKeyCache: state.primaryKeyCache ? [...state.primaryKeyCache] : null,
+    };
+}
+
+function restoreResultPanelFromTab(tab) {
+    _initEmptyResultPanelHtmlOnce();
+    const { content, filterWrap, filterInput, headerLabel } = _getResultRoots();
+    if (!content) return;
+
+    // Clear whatever is currently in the panel (it belongs to the outgoing tab).
+    content.innerHTML = '';
+
+    if (tab && tab.type === 'sql' && tab.resultState) {
+        const s = tab.resultState;
+        content.appendChild(s.domFragment);
+        if (filterWrap) filterWrap.style.display = s.filterWrapVisible ? '' : 'none';
+        if (filterInput) filterInput.value = s.filterInputValue || '';
+        if (headerLabel) headerLabel.textContent = s.headerLabel || 'Results';
+
+        // Restore the mutable state so sort/filter/cell-edit operate on the right data.
+        state.resultData = s.resultData;
+        state.sortState = s.sortState || { columnIndex: -1, direction: null };
+        state.filterKeyword = s.filterKeyword || '';
+        state.lastResult = s.lastResult;
+        state.lastError = s.lastError;
+        state.primaryKeyCache = s.primaryKeyCache;
+    } else {
+        // Fresh / ERD / never-executed tab — show the initial placeholder.
+        content.innerHTML = _emptyResultPanelHtml;
+        if (filterWrap) filterWrap.style.display = 'none';
+        if (filterInput) filterInput.value = '';
+        if (headerLabel) headerLabel.textContent = 'Results';
+        state.resultData = null;
+        state.sortState = { columnIndex: -1, direction: null };
+        state.filterKeyword = '';
+        state.lastResult = null;
+        state.lastError = null;
+        state.primaryKeyCache = null;
+    }
+}
+
 // Clear any tab (SQL or ERD) still referencing a connection that went away.
 function detachConnectionFromTabs(connId) {
     if (!connId) return;
@@ -750,9 +832,18 @@ function restoreEditorSession() {
 function switchTab(id) {
     const prevTabId = state.activeEditorId;
     const prevTab = state.editors.find(e => e.id === prevTabId);
+
+    // Phase E: snapshot the outgoing tab's result panel before we leave it,
+    // so it can be restored when the user comes back.
+    if (prevTab && prevTab.id !== id) {
+        try { captureResultPanelToTab(prevTab); } catch (e) {}
+    }
+
     state.activeEditorId = id;
     const tab = state.editors.find(e => e.id === id);
     if (!tab) { renderTabs(); return; }
+
+    try { restoreResultPanelFromTab(tab); } catch (e) {}
 
     // Phase A: mirror the new tab's connection into the legacy global so
     // visual cues (tree highlight, status bar) remain consistent until
