@@ -766,6 +766,156 @@ body {
     color: var(--error);
 }
 
+/* Tab drag-to-reorder */
+.tab.dragging {
+    opacity: 0.4;
+}
+.tab.drop-before {
+    box-shadow: inset 2px 0 0 var(--accent);
+}
+.tab.drop-after {
+    box-shadow: inset -2px 0 0 var(--accent);
+}
+
+/* Tab connection chip (#124 Phase B) — icon-only; details on hover via title */
+.tab-conn-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    margin-right: 6px;
+    border-radius: 50%;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+.tab-conn-chip .chip-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--chip-color, var(--text-muted));
+}
+.tab-conn-chip.no-conn .chip-dot {
+    background: var(--text-muted);
+    opacity: 0.4;
+}
+.tab-conn-chip.has-conn {
+    border-color: var(--chip-color, var(--accent));
+}
+.tab-conn-chip:hover {
+    background: var(--bg-hover);
+    transform: scale(1.1);
+}
+.tab-conn-chip.readonly {
+    cursor: default;
+    opacity: 0.6;
+}
+.tab-conn-chip.readonly:hover {
+    background: var(--bg-elev);
+    transform: none;
+}
+
+/* Custom tooltip for tab chip (positioned under/over chip via JS) */
+.tab-chip-tooltip {
+    position: fixed;
+    z-index: 10000;
+    max-width: 260px;
+    padding: 6px 10px;
+    background: var(--bg-base);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+    font-size: 11px;
+    line-height: 1.4;
+    white-space: pre-line;
+    pointer-events: none;
+}
+
+/* Tab connection dropdown menu */
+.tab-conn-menu {
+    position: fixed;
+    z-index: 9999;
+    width: 260px;
+    max-height: 360px;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-base);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+    overflow: hidden;
+}
+.tab-conn-menu-search {
+    padding: 8px 10px;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-elev);
+    color: var(--text-primary);
+    font-size: 12px;
+    outline: none;
+}
+.tab-conn-menu-list {
+    overflow-y: auto;
+    padding: 4px 0;
+    flex: 1;
+}
+.tab-conn-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--text-primary);
+}
+.tab-conn-menu-item.active {
+    background: var(--bg-hover);
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
+}
+.tab-conn-menu-item.selected {
+    color: var(--accent);
+    font-weight: 600;
+}
+.tab-conn-menu-item.selected.active {
+    background: var(--bg-hover);
+}
+.tab-conn-menu-item .chip-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    flex-shrink: 0;
+}
+.tab-conn-menu-item .chip-dot.connected {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--success) 30%, transparent);
+    background: var(--success, #4ade80);
+}
+.tab-conn-menu-item .chip-dot.none {
+    background: transparent;
+    border: 1px dashed var(--border);
+}
+.tab-conn-menu-item .menu-item-text {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.tab-conn-menu-item .menu-item-badge {
+    font-size: 8px;
+    color: var(--success, #4ade80);
+}
+.tab-conn-menu-empty {
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-align: center;
+}
+
 #btn-add-tab {
     background: none;
     border: none;
