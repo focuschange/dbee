@@ -804,6 +804,7 @@ body {
 }
 .tab-conn-chip.has-conn {
     border-color: var(--chip-color, var(--accent));
+    background: color-mix(in srgb, var(--chip-color, var(--accent)) 14%, transparent);
 }
 .tab-conn-chip:hover {
     background: var(--bg-hover);
@@ -817,6 +818,82 @@ body {
     background: var(--bg-elev);
     transform: none;
 }
+
+/* Toast notifications (#127 Phase F) */
+.toast-host {
+    position: fixed;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10001;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+}
+.toast {
+    padding: 10px 16px;
+    border-radius: 6px;
+    background: var(--bg-base);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+    font-size: 13px;
+    max-width: 420px;
+    opacity: 0;
+    transform: translateY(-8px);
+    transition: opacity 0.18s ease-out, transform 0.18s ease-out;
+}
+.toast.toast-visible { opacity: 1; transform: translateY(0); }
+.toast-error { border-color: var(--error); border-left: 3px solid var(--error); }
+.toast-info  { border-left: 3px solid var(--accent); }
+.toast-warn  { border-color: var(--warning); border-left: 3px solid var(--warning); }
+
+/* TX warning banner (#127 Phase F) — explains that pooled connections
+   don't carry transaction boundaries across separate query submissions. */
+.tx-warning-banner {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 9000;
+    max-width: 420px;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 14px;
+    background: var(--bg-base);
+    border: 1px solid var(--warning, #d97706);
+    border-left: 3px solid var(--warning, #d97706);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    color: var(--text-primary);
+    font-size: 12px;
+    line-height: 1.5;
+}
+.tx-warning-banner svg {
+    color: var(--warning, #d97706);
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+.tx-warning-banner .tx-warning-body { flex: 1; }
+.tx-warning-banner .tx-warning-body strong { display: block; margin-bottom: 4px; color: var(--text-bright); }
+.tx-warning-banner code {
+    background: var(--bg-elev);
+    padding: 0 4px;
+    border-radius: 3px;
+    font-size: 11px;
+}
+.tx-warning-banner .tx-warning-dismiss {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 4px;
+    margin-left: 4px;
+}
+.tx-warning-banner .tx-warning-dismiss:hover { color: var(--text-bright); }
 
 /* Custom tooltip for tab chip (positioned under/over chip via JS) */
 .tab-chip-tooltip {

@@ -395,6 +395,11 @@ function initMonaco() {
             openActiveTabConnectionMenu();
         });
 
+        // Ctrl+Shift+D — duplicate the active tab (#127 Phase F)
+        monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyD, () => {
+            duplicateActiveTab();
+        });
+
         // Add AI context menu actions
         monacoEditor.addAction({ id: 'ai-explain', label: 'AI: Explain SQL', contextMenuGroupId: 'ai', run: aiExplainSql });
         monacoEditor.addAction({ id: 'ai-optimize', label: 'AI: Optimize SQL', contextMenuGroupId: 'ai', run: aiOptimizeSql });
@@ -757,6 +762,44 @@ function addEditorTab() {
     renderTabs();
     switchTab(id);
     try { refreshTreeConnectionBadges(); } catch (e) {}
+}
+
+// #127 Phase F — duplicate the active SQL tab (content + connection).
+// ERD tabs are pinned to a specific conn+schema, so we skip duplicating them.
+function duplicateActiveTab() {
+    const src = getActiveTab();
+    if (!src) return;
+    if (src.type !== 'sql') {
+        const msg = 'Only SQL tabs can be duplicated';
+        updateStatus(msg, true);
+        showToast(msg, 'error');
+        return;
+    }
+    editorCounter++;
+    const id = 'tab-' + editorCounter;
+    const sourceSql = src.model ? src.model.getValue() : '';
+    const model = monaco.editor.createModel(sourceSql, 'sql');
+    const tab = {
+        id,
+        type: 'sql',
+        name: (src.name || 'Query') + ' (copy)',
+        model,
+        savedContent: sourceSql,
+        connId: src.connId || null,
+        connName: src.connName || null,
+    };
+    model.onDidChangeContent(() => {
+        tab.dirty = model.getValue() !== tab.savedContent;
+        renderTabs();
+    });
+    // Insert the clone immediately after the source tab instead of at the end.
+    const srcIdx = state.editors.findIndex(t => t.id === src.id);
+    if (srcIdx >= 0) state.editors.splice(srcIdx + 1, 0, tab);
+    else state.editors.push(tab);
+    renderTabs();
+    switchTab(id);
+    try { refreshTreeConnectionBadges(); } catch (e) {}
+    updateStatus(`Duplicated tab: ${tab.name}`);
 }
 
 /**
@@ -2108,6 +2151,15 @@ async function executeQuery(runAll = false) {
     if (!sql.trim()) {
         updateStatus('No SQL to execute', true);
         return;
+    }
+
+    // #127 Phase F — a lone BEGIN / START TRANSACTION without a matching
+    // COMMIT/ROLLBACK in the same submission won't actually open a reusable
+    // transaction because the next execute() borrows a different pooled
+    // connection. Warn once per session.
+    if (/\b(BEGIN\b(?!\s+(?:TRY|CATCH|END))|START\s+TRANSACTION)\b/i.test(sql)
+        && !/\b(COMMIT|ROLLBACK)\b/i.test(sql)) {
+        showTxWarningBanner();
     }
 
     const executionId = 'exec-' + Date.now();
@@ -4362,6 +4414,14 @@ function initEventHandlers() {
             return;
         }
 
+        // Ctrl/Cmd+Shift+D — duplicate active tab (#127 Phase F)
+        // Overrides the browser's default "Bookmark this tab" binding.
+        if (mod && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+            e.preventDefault();
+            duplicateActiveTab();
+            return;
+        }
+
         // Ctrl/Cmd+S — Save current query
         if (mod && e.key === 's') {
             e.preventDefault();
@@ -4815,6 +4875,7 @@ const CMD_PALETTE_COMMANDS = [
     { name: 'Save Query', shortcut: 'Ctrl+S', action: saveCurrentQuery },
     { name: 'Saved Queries', shortcut: 'Alt+S', action: showSavedQueriesDialog },
     { name: 'New Tab', shortcut: 'Alt+N', action: () => addEditorTab() },
+    { name: 'Duplicate Tab', shortcut: 'Ctrl+Shift+D', action: () => duplicateActiveTab() },
     { name: 'Export CSV', action: () => exportData('csv') },
     { name: 'Export JSON', action: () => exportData('json') },
     { name: 'Export Excel', action: () => exportData('xlsx') },
@@ -4890,12 +4951,67 @@ function initCommandPalette() {
 async function executeTxn(cmd) {
     const connId = getActiveConnectionId();
     if (!connId) { updateStatus('No active connection', true); return; }
+    // #127 Phase F — warn about connection-pool semantics the first time a
+    // user touches a transaction boundary. BEGIN/START TRANSACTION submitted
+    // on its own does not extend to the next query because each execute()
+    // borrows a fresh connection from the pool.
+    if (/^(BEGIN|START\s+TRANSACTION)\b/i.test(cmd)) {
+        showTxWarningBanner();
+    }
     try {
         const results = await api.query.execute(connId, cmd, 1);
         const r = Array.isArray(results) ? results[0] : results;
         if (r && r.error) updateStatus(`${cmd} failed: ${r.errorMessage}`, true);
         else updateStatus(`${cmd} executed`);
     } catch (e) { updateStatus(`${cmd} failed: ${e.message}`, true); }
+}
+
+const TX_WARNING_DISMISS_KEY = 'dbee-tx-warning-dismissed';
+
+// Lightweight transient toast. Complements the status bar so the user
+// notices errors even when their eyes are on the editor.
+function showToast(message, level = 'info', durationMs = 3000) {
+    if (!message) return;
+    const host = document.getElementById('toast-host') || (() => {
+        const h = document.createElement('div');
+        h.id = 'toast-host';
+        h.className = 'toast-host';
+        document.body.appendChild(h);
+        return h;
+    })();
+    const toast = document.createElement('div');
+    toast.className = 'toast toast-' + (level || 'info');
+    toast.textContent = message;
+    host.appendChild(toast);
+    // Force reflow so the initial transform-from state applies before the class change
+    void toast.offsetWidth;
+    toast.classList.add('toast-visible');
+    setTimeout(() => {
+        toast.classList.remove('toast-visible');
+        setTimeout(() => toast.remove(), 200);
+    }, durationMs);
+}
+
+function showTxWarningBanner() {
+    if (localStorage.getItem(TX_WARNING_DISMISS_KEY) === '1') return;
+    if (document.getElementById('tx-warning-banner')) return;
+
+    const banner = document.createElement('div');
+    banner.id = 'tx-warning-banner';
+    banner.className = 'tx-warning-banner';
+    banner.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <div class="tx-warning-body">
+            <strong>Heads up: transactions don't carry across separate query runs.</strong>
+            <div>DBee pools connections, so each execute borrows a fresh one — <code>BEGIN/COMMIT</code> only work when all statements are sent together in a single SQL (separated by <code>;</code>).</div>
+        </div>
+        <button class="tx-warning-dismiss" title="Don't show again">&times;</button>
+    `;
+    document.body.appendChild(banner);
+    banner.querySelector('.tx-warning-dismiss').onclick = () => {
+        localStorage.setItem(TX_WARNING_DISMISS_KEY, '1');
+        banner.remove();
+    };
 }
 
 async function aiAlterSchema() {
