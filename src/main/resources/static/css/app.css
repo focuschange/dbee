@@ -3647,8 +3647,21 @@ body[data-theme="light"] .rf-edge-label {
     display: block;
 }
 
+/* Guarantee inactive panes stay hidden even when a tab module applies a
+   class with its own `display` (e.g. .hist-root { display:flex }).
+   Specificity 0,2,0 beats the single-class overrides below. */
+.grp-tab-pane:not(.active) {
+    display: none;
+}
+
 /* Sessions tab (#137) */
-.sess-panel { display: flex; flex-direction: column; gap: 14px; }
+.sess-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    height: 100%;
+    overflow-y: auto;
+}
 .sess-section { display: flex; flex-direction: column; gap: 6px; }
 .sess-section-title {
     font-size: 11px;
@@ -3756,6 +3769,52 @@ body[data-theme="light"] .rf-edge-label {
 }
 .sess-dirty { color: var(--warning); margin-left: 4px; font-size: 8px; }
 .sess-conn-unassigned .sess-row-name { color: var(--text-muted); font-style: italic; }
+
+/* Pool Stats section (#138) */
+.sess-section-title { display: flex; align-items: center; justify-content: space-between; }
+.sess-section-controls { display: inline-flex; gap: 4px; }
+.sess-toggle.sess-toggle-on {
+    background: var(--accent-subtle);
+    color: var(--accent);
+    border-color: var(--accent);
+}
+.sess-pool-row {
+    display: grid;
+    grid-template-columns: 1fr auto 100px auto auto;
+    align-items: center;
+    gap: 8px;
+}
+.sess-pool-numbers {
+    font-variant-numeric: tabular-nums;
+    color: var(--text-secondary);
+    font-size: 11px;
+    white-space: nowrap;
+}
+.sess-pool-max { color: var(--text-muted); font-size: 10px; }
+.sess-pool-bar {
+    position: relative;
+    height: 6px;
+    background: var(--bg-base);
+    border-radius: 3px;
+    overflow: hidden;
+}
+.sess-pool-bar-active,
+.sess-pool-bar-idle {
+    position: absolute;
+    top: 0;
+    height: 100%;
+}
+.sess-pool-bar-active { left: 0; background: var(--accent); }
+.sess-pool-bar-idle { background: color-mix(in srgb, var(--text-muted) 40%, transparent); }
+.sess-pool-await {
+    color: var(--warning);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+.sess-badge-warn {
+    background: color-mix(in srgb, var(--error) 20%, transparent);
+    color: var(--error);
+}
 .sess-running-body { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
 .sess-running-meta { display: flex; gap: 8px; align-items: center; font-size: 11px; color: var(--text-secondary); }
 .sess-running-conn { color: var(--text-primary); font-weight: 500; }

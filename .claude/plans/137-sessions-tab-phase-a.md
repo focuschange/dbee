@@ -1,7 +1,7 @@
 ---
 todo: 137
 title: 우측 패널 Sessions 탭 Phase A (MVP)
-status: in_progress
+status: completed
 created: 2026-04-19
 branch: claude/editor-session-1
 ---

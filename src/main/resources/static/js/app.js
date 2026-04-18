@@ -44,6 +44,7 @@ const api = {
         test: (info) => api.request('POST', '/api/connections/test', info),
         connect: (id) => api.request('POST', `/api/connections/${id}/connect`),
         disconnect: (id) => api.request('POST', `/api/connections/${id}/disconnect`),
+        poolStats: () => api.request('GET', '/api/connections/pool-stats'),
     },
     query: {
         execute: (connectionId, sql, maxRows = 1000, executionId = null) =>
@@ -3403,6 +3404,11 @@ const RightPanel = (() => {
 const SessionsTab = (() => {
     let root = null;
     let tickTimer = null;
+    let poolTimer = null;
+    const LS_POOL_AUTO = 'dbee.sess.poolAutoRefresh';
+    let poolAutoRefresh = localStorage.getItem(LS_POOL_AUTO) === '1';
+    let lastPoolStats = [];
+    let poolLoading = false;
 
     function isActiveRightPanelTab() {
         if (!root) return false;
@@ -3514,6 +3520,89 @@ const SessionsTab = (() => {
         return items.length ? items.join('') : `<div class="sess-empty">No connections registered</div>`;
     }
 
+    function renderPoolStats() {
+        if (poolLoading && lastPoolStats.length === 0) {
+            return `<div class="sess-empty">Loading…</div>`;
+        }
+        if (!lastPoolStats.length) {
+            return `<div class="sess-empty">No open pools. Press refresh after connecting.</div>`;
+        }
+        return lastPoolStats.map(s => {
+            const conn = state.connections.find(c => c.id === s.connectionId);
+            const name = conn ? conn.name : s.connectionId;
+            const color = conn?.properties?.color || '';
+            const colorStyle = color ? ` style="--row-color:${escapeHtml(color)}"` : '';
+            const total = Math.max(0, s.total || 0);
+            const max = Math.max(1, s.maxPoolSize || total || 1);
+            const active = Math.max(0, s.active || 0);
+            const idle = Math.max(0, s.idle || 0);
+            const awaiting = Math.max(0, s.awaiting || 0);
+            const activePct = Math.round((active / max) * 100);
+            const idlePct = Math.round((idle / max) * 100);
+            const warn = awaiting > 0 || (idle === 0 && active >= max);
+            const warnBadge = warn
+                ? `<span class="sess-badge sess-badge-warn" title="Saturated — ${awaiting} thread(s) waiting">saturated</span>`
+                : '';
+            return `
+                <div class="sess-row sess-pool-row"${colorStyle}>
+                    <span class="sess-row-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+                    <span class="sess-pool-numbers">${active} / ${total} <span class="sess-pool-max">(max ${max})</span></span>
+                    <div class="sess-pool-bar" title="active ${active}, idle ${idle}, max ${max}">
+                        <span class="sess-pool-bar-active" style="width:${activePct}%"></span>
+                        <span class="sess-pool-bar-idle" style="left:${activePct}%;width:${idlePct}%"></span>
+                    </div>
+                    ${awaiting > 0 ? `<span class="sess-pool-await" title="Threads awaiting a connection">⏳ ${awaiting}</span>` : ''}
+                    ${warnBadge}
+                </div>`;
+        }).join('');
+    }
+
+    async function refreshPoolStats() {
+        poolLoading = true;
+        try {
+            const data = await api.connections.poolStats();
+            lastPoolStats = Array.isArray(data) ? data : [];
+        } catch (e) {
+            console.warn('poolStats failed', e);
+            lastPoolStats = [];
+        } finally {
+            poolLoading = false;
+            const el = root && root.querySelector('[data-body="pool"]');
+            if (el) el.innerHTML = renderPoolStats();
+        }
+    }
+
+    function startPoolPollingIfNeeded() {
+        stopPoolPolling();
+        if (!poolAutoRefresh) return;
+        if (!isActiveRightPanelTab()) return;
+        poolTimer = setInterval(() => { refreshPoolStats(); }, 5000);
+    }
+
+    function stopPoolPolling() {
+        if (poolTimer) { clearInterval(poolTimer); poolTimer = null; }
+    }
+
+    function togglePoolAutoRefresh() {
+        poolAutoRefresh = !poolAutoRefresh;
+        try { localStorage.setItem(LS_POOL_AUTO, poolAutoRefresh ? '1' : '0'); } catch (e) {}
+        // Re-render controls so the toggle button shows the new state
+        const ctrl = root && root.querySelector('[data-body="pool-controls"]');
+        if (ctrl) ctrl.innerHTML = renderPoolControls();
+        if (poolAutoRefresh) { refreshPoolStats(); startPoolPollingIfNeeded(); }
+        else stopPoolPolling();
+    }
+
+    function renderPoolControls() {
+        const cls = poolAutoRefresh ? 'sess-toggle-on' : '';
+        return `
+            <button class="sess-btn-mini" data-action="pool-refresh" title="Refresh now">↻</button>
+            <button class="sess-btn-mini sess-toggle ${cls}" data-action="pool-toggle-auto" title="Auto-refresh every 5s">
+                Auto ${poolAutoRefresh ? 'on' : 'off'}
+            </button>
+        `;
+    }
+
     function renderRunning() {
         const e = state.currentExecution;
         if (!e) return `<div class="sess-empty">No query running</div>`;
@@ -3543,6 +3632,13 @@ const SessionsTab = (() => {
                     <div class="sess-section-title">Connections</div>
                     <div class="sess-section-body" data-body="active">${renderActiveConnections()}</div>
                 </section>
+                <section class="sess-section" data-section="pool">
+                    <div class="sess-section-title">
+                        <span>Pool Stats</span>
+                        <span class="sess-section-controls" data-body="pool-controls">${renderPoolControls()}</span>
+                    </div>
+                    <div class="sess-section-body" data-body="pool">${renderPoolStats()}</div>
+                </section>
                 <section class="sess-section" data-section="running">
                     <div class="sess-section-title">Running Queries</div>
                     <div class="sess-section-body" data-body="running">${renderRunning()}</div>
@@ -3550,6 +3646,9 @@ const SessionsTab = (() => {
             </div>`;
         bindDelegatedHandlers(el);
         startTickIfNeeded();
+        // Fetch once on mount so the user sees data without having to click refresh.
+        refreshPoolStats();
+        startPoolPollingIfNeeded();
     }
 
     function bindDelegatedHandlers(el) {
@@ -3589,6 +3688,10 @@ const SessionsTab = (() => {
                 if (conn) { await pickConnectionForActiveTab(conn.id); refresh(); }
             } else if (action === 'cancel') {
                 cancelQuery(id);
+            } else if (action === 'pool-refresh') {
+                refreshPoolStats();
+            } else if (action === 'pool-toggle-auto') {
+                togglePoolAutoRefresh();
             }
         };
     }
@@ -3597,9 +3700,15 @@ const SessionsTab = (() => {
         if (!root) return;
         const a = root.querySelector('[data-body="active"]');
         const r = root.querySelector('[data-body="running"]');
+        const p = root.querySelector('[data-body="pool"]');
         if (a) a.innerHTML = renderActiveConnections();
         if (r) r.innerHTML = renderRunning();
+        // Pool section re-renders from the last snapshot; fresh data comes
+        // from polling or the user's refresh button (no auto-poll on every
+        // trivial state change to avoid extra backend hits).
+        if (p) p.innerHTML = renderPoolStats();
         startTickIfNeeded();
+        startPoolPollingIfNeeded();
     }
 
     function startTickIfNeeded() {
