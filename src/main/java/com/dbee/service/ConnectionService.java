@@ -83,7 +83,11 @@ public class ConnectionService {
 
     public void connect(String id) {
         ConnectionInfo info = getConnection(id);
-        connectionManager.getOrCreate(info);
+        if (info.getDatabaseType() == com.dbee.model.DatabaseType.ELASTICSEARCH) {
+            connectionManager.getElasticSearchClient(info);
+        } else {
+            connectionManager.getOrCreate(info);
+        }
     }
 
     public void disconnect(String id) {

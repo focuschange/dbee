@@ -50,7 +50,7 @@
                 <button class="menu-trigger">Query</button>
                 <div class="menu-dropdown">
                     <button id="btn-run" class="menu-action menu-action-primary">Run <span class="menu-shortcut">Ctrl+Enter</span></button>
-                    <div class="menu-separator"></div>
+                    <button id="btn-run-all" class="menu-action">Run All <span class="menu-shortcut">Ctrl+Shift+Enter</span></button>
                     <div class="menu-separator"></div>
                     <div class="menu-label">Transaction</div>
                     <button class="menu-action" onclick="executeTxn('BEGIN')">BEGIN</button>
@@ -292,6 +292,11 @@
                         <button id="result-filter-clear" title="Clear filter">&times;</button>
                     </div>
                     <span id="result-summary"></span>
+                    <div id="result-export-buttons">
+                        <button class="btn-result-export export-option" data-format="csv" data-tooltip="Export CSV">CSV</button>
+                        <button class="btn-result-export export-option" data-format="json" data-tooltip="Export JSON">JSON</button>
+                        <button class="btn-result-export export-option" data-format="xlsx" data-tooltip="Export Excel (XLSX)">XLSX</button>
+                    </div>
                 </div>
                 <div id="result-content">
                     <div class="placeholder">
@@ -409,6 +414,7 @@
                             <option value="DUCKDB">DuckDB</option>
                             <option value="MONGODB">MongoDB</option>
                             <option value="REDIS">Redis</option>
+                            <option value="ELASTICSEARCH">ElasticSearch</option>
                         </select>
                     </div>
                 </div>

@@ -1,6 +1,8 @@
 package com.dbee.db;
 
+import com.dbee.db.es.ElasticSearchClient;
 import com.dbee.model.ConnectionInfo;
+import com.dbee.model.DatabaseType;
 import com.dbee.model.SshTunnelInfo;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
@@ -9,7 +11,6 @@ import org.slf4j.LoggerFactory;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
-import java.sql.SQLException;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
@@ -17,6 +18,7 @@ import java.util.function.Function;
 public class ConnectionManager {
     private static final Logger log = LoggerFactory.getLogger(ConnectionManager.class);
     private final Map<String, HikariDataSource> pools = new ConcurrentHashMap<>();
+    private final Map<String, ElasticSearchClient> esClients = new ConcurrentHashMap<>();
     private final SshTunnelManager sshTunnelManager = new SshTunnelManager();
 
     // Callback to resolve tunnelId -> SshTunnelInfo
@@ -27,10 +29,29 @@ public class ConnectionManager {
     }
 
     public DataSource getOrCreate(ConnectionInfo info) {
+        if (info.getDatabaseType() == DatabaseType.ELASTICSEARCH) {
+            throw new UnsupportedOperationException(
+                    "ElasticSearch connections use REST API, not JDBC. Call getElasticSearchClient() instead.");
+        }
         return pools.computeIfAbsent(info.getId(), id -> createPool(info));
     }
 
+    public ElasticSearchClient getElasticSearchClient(ConnectionInfo info) {
+        return esClients.computeIfAbsent(info.getId(), id -> {
+            log.info("Creating ElasticSearch client: {}", info.getName());
+            return new ElasticSearchClient(info);
+        });
+    }
+
     public boolean testConnection(ConnectionInfo info, SshTunnelInfo tunnel) {
+        if (info.getDatabaseType() == DatabaseType.ELASTICSEARCH) {
+            ElasticSearchClient client = new ElasticSearchClient(info);
+            boolean ok = client.ping();
+            if (ok) log.info("ES connection test successful: {}", info.getName());
+            else log.error("ES connection test failed: {}", info.getName());
+            return ok;
+        }
+
         SshTunnelManager.TestTunnel testTunnel = null;
         try {
             if (tunnel != null) {
@@ -63,6 +84,9 @@ public class ConnectionManager {
             ds.close();
             log.info("Connection pool closed: {}", connectionId);
         }
+        if (esClients.remove(connectionId) != null) {
+            log.info("ES client closed: {}", connectionId);
+        }
     }
 
     public void closeAll() {
@@ -70,14 +94,17 @@ public class ConnectionManager {
             if (!ds.isClosed()) ds.close();
         });
         pools.clear();
+        esClients.clear();
         sshTunnelManager.closeAll();
         log.info("All connection pools and SSH tunnels closed");
     }
 
     public boolean isConnected(String connectionId) {
+        ElasticSearchClient esClient = esClients.get(connectionId);
+        if (esClient != null) return esClient.ping();
+
         HikariDataSource ds = pools.get(connectionId);
         if (ds == null || ds.isClosed()) return false;
-        // Validate with a quick connection test
         try (Connection conn = ds.getConnection()) {
             return conn.isValid(2);
         } catch (Exception e) {

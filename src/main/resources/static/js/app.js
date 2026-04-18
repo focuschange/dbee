@@ -4,8 +4,22 @@
 
 const DEFAULT_PORTS = {
     MYSQL: 3306, POSTGRESQL: 5432, ORACLE: 1521,
-    SQLITE: 0, MSSQL: 1433, ATHENA: 443
+    SQLITE: 0, MSSQL: 1433, ATHENA: 443,
+    ELASTICSEARCH: 9200
 };
+
+function isEsConnection(connId) {
+    if (!connId || !state || !state.connections) return false;
+    const conn = state.connections.find(c => c.id === connId);
+    return conn && conn.databaseType === 'ELASTICSEARCH';
+}
+
+function buildSelectAll(connId, schema, table, limit = 100) {
+    if (isEsConnection(connId)) {
+        return `SELECT * FROM ${table} LIMIT ${limit};`;
+    }
+    return `SELECT * FROM ${schema ? schema + '.' : ''}${table} LIMIT ${limit};`;
+}
 
 // ============================================================
 // API Client
@@ -128,7 +142,14 @@ const api = {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ connectionId, sql, maxRows: 50000 })
             });
-            if (!res.ok) throw new Error('Export failed');
+            if (!res.ok) {
+                let detail = res.statusText;
+                try {
+                    const body = await res.text();
+                    if (body) detail = body.slice(0, 200);
+                } catch (e) {}
+                throw new Error(`HTTP ${res.status}: ${detail}`);
+            }
             const blob = await res.blob();
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
@@ -187,9 +208,14 @@ function initMonaco() {
             padding: { top: 8 },
         });
 
-        // Ctrl+Enter to execute
+        // Ctrl+Enter: run current statement (cursor) or selection
         monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
-            executeQuery();
+            executeQuery(false);
+        });
+
+        // Ctrl+Shift+Enter: run entire editor
+        monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter, () => {
+            executeQuery(true);
         });
 
         // Ctrl+E to EXPLAIN
@@ -693,7 +719,82 @@ function getCurrentSql() {
     const activeTab = state.editors.find(t => t.id === state.activeEditorId);
     if (activeTab && activeTab.type !== 'sql') return '';
     const selection = monacoEditor.getModel().getValueInRange(monacoEditor.getSelection());
-    return selection.trim() ? selection : monacoEditor.getValue();
+    if (selection.trim()) return selection;
+    return getSqlAtCursor();
+}
+
+function getAllSql() {
+    if (!monacoEditor) return '';
+    const activeTab = state.editors.find(t => t.id === state.activeEditorId);
+    if (activeTab && activeTab.type !== 'sql') return '';
+    return monacoEditor.getValue();
+}
+
+// Returns the SQL statement containing the current cursor, split by ';'.
+// Strips block/line comments during splitting so a ';' inside a comment is ignored.
+function getSqlAtCursor() {
+    if (!monacoEditor) return '';
+    const model = monacoEditor.getModel();
+    const pos = monacoEditor.getPosition();
+    if (!model || !pos) return monacoEditor.getValue();
+    const full = model.getValue();
+    const cursorOffset = model.getOffsetAt(pos);
+
+    const boundaries = findStatementBoundaries(full);
+    for (const { start, end } of boundaries) {
+        if (cursorOffset >= start && cursorOffset <= end) {
+            return full.substring(start, end).trim();
+        }
+    }
+    // Fallback: last statement if cursor is past everything
+    if (boundaries.length > 0) {
+        const last = boundaries[boundaries.length - 1];
+        return full.substring(last.start, last.end).trim();
+    }
+    return full.trim();
+}
+
+function findStatementBoundaries(sql) {
+    const result = [];
+    let start = 0;
+    let i = 0;
+    const n = sql.length;
+    while (i < n) {
+        const ch = sql[i];
+        const next = sql[i + 1];
+        // line comment
+        if (ch === '-' && next === '-') {
+            while (i < n && sql[i] !== '\n') i++;
+            continue;
+        }
+        // block comment
+        if (ch === '/' && next === '*') {
+            i += 2;
+            while (i < n && !(sql[i] === '*' && sql[i + 1] === '/')) i++;
+            if (i < n) i += 2;
+            continue;
+        }
+        // single / double quoted string
+        if (ch === "'" || ch === '"' || ch === '`') {
+            const quote = ch;
+            i++;
+            while (i < n) {
+                if (sql[i] === '\\' && i + 1 < n) { i += 2; continue; }
+                if (sql[i] === quote) { i++; break; }
+                i++;
+            }
+            continue;
+        }
+        if (ch === ';') {
+            result.push({ start, end: i + 1 });
+            start = i + 1;
+        }
+        i++;
+    }
+    if (start < n && sql.substring(start).trim()) {
+        result.push({ start, end: n });
+    }
+    return result;
 }
 
 // ============================================================
@@ -967,17 +1068,22 @@ function loadSchemaChildren(connId, schema, schemaNode) {
     const childrenEl = schemaNode.querySelector('.tree-children');
     childrenEl.innerHTML = '';
 
-    // Tables folder
-    const tablesFolder = createCategoryFolder('Tables', SVG_FOLDER_TABLE, 'icon-table', () => loadTablesIntoFolder(connId, schema, tablesFolder));
+    const conn = state.connections.find(c => c.id === connId);
+    const isEs = conn && conn.databaseType === 'ELASTICSEARCH';
+
+    // Tables / Indices folder
+    const tablesLabel = isEs ? 'Indices' : 'Tables';
+    const tablesFolder = createCategoryFolder(tablesLabel, SVG_FOLDER_TABLE, 'icon-table', () => loadTablesIntoFolder(connId, schema, tablesFolder));
     childrenEl.appendChild(tablesFolder);
 
-    // Routines folder
-    const routinesFolder = createCategoryFolder('Routines', SVG_FOLDER_ROUTINE, 'icon-routine', () => loadRoutinesIntoFolder(connId, schema, routinesFolder));
-    childrenEl.appendChild(routinesFolder);
+    // Routines / Events — ES has neither concept
+    if (!isEs) {
+        const routinesFolder = createCategoryFolder('Routines', SVG_FOLDER_ROUTINE, 'icon-routine', () => loadRoutinesIntoFolder(connId, schema, routinesFolder));
+        childrenEl.appendChild(routinesFolder);
 
-    // Events folder
-    const eventsFolder = createCategoryFolder('Events', SVG_FOLDER_EVENT, 'icon-event', () => loadEventsIntoFolder(connId, schema, eventsFolder));
-    childrenEl.appendChild(eventsFolder);
+        const eventsFolder = createCategoryFolder('Events', SVG_FOLDER_EVENT, 'icon-event', () => loadEventsIntoFolder(connId, schema, eventsFolder));
+        childrenEl.appendChild(eventsFolder);
+    }
 
     schemaNode.classList.add('expanded');
 }
@@ -1158,9 +1264,7 @@ function createTableNode(connId, schema, table) {
     };
 
     content.ondblclick = () => {
-        if (monacoEditor) {
-            monacoEditor.setValue(`SELECT * FROM ${schema}.${table.name} LIMIT 100;`);
-        }
+        insertSqlSmart(buildSelectAll(connId, schema, table.name));
     };
 
     // Right-click context for DDL/Indexes
@@ -1254,10 +1358,7 @@ function attachErDiagramClickHandlers(connId, schema) {
         if (!name || name.includes(' ') || name.includes('(')) return; // skip type labels
         textEl.style.cursor = 'pointer';
         textEl.onclick = () => {
-            if (monacoEditor) {
-                monacoEditor.setValue(`SELECT * FROM ${schema}.${name} LIMIT 100;`);
-                monacoEditor.focus();
-            }
+            insertSqlSmart(buildSelectAll(connId, schema, name));
             document.getElementById('er-dialog').style.display = 'none';
             updateStatus(`Loaded: SELECT * FROM ${name}`);
         };
@@ -1327,7 +1428,7 @@ function showTableContextMenu(e, connId, schema, tableName) {
     document.body.appendChild(menu);
 
     menu.querySelector('[data-action="select-top"]').onclick = () => {
-        if (monacoEditor) monacoEditor.setValue(`SELECT * FROM ${schema}.${tableName} LIMIT 100;`);
+        insertSqlSmart(buildSelectAll(connId, schema, tableName));
         menu.remove();
     };
     menu.querySelector('[data-action="show-ddl"]').onclick = async () => {
@@ -1434,12 +1535,12 @@ async function showTableIndexes(connId, schema, tableName) {
 // ============================================================
 // Query Execution
 // ============================================================
-async function executeQuery() {
+async function executeQuery(runAll = false) {
     if (!state.activeConnectionId) {
         updateStatus('No active connection. Double-click a connection in the tree.', true);
         return;
     }
-    const sql = getCurrentSql();
+    const sql = runAll ? getAllSql() : getCurrentSql();
     if (!sql.trim()) {
         updateStatus('No SQL to execute', true);
         return;
@@ -2766,7 +2867,7 @@ const Inspector = (() => {
             </div>`;
 
         rootEl.querySelector('.insp-btn-select').onclick = () => {
-            insertSqlSmart(`SELECT * FROM ${target.schema}.${target.table} LIMIT 100;`);
+            insertSqlSmart(buildSelectAll(target.connId, target.schema, target.table));
         };
         rootEl.querySelector('.insp-btn-ddl').onclick = async () => {
             try {
@@ -3163,7 +3264,7 @@ async function initErdTab(tab) {
               .catch(() => {});
         },
         onTableDoubleClick: (tableName) => {
-            const sql = `SELECT * FROM ${tab.schema ? tab.schema + '.' : ''}${tableName} LIMIT 100;`;
+            const sql = buildSelectAll(tab.connId, tab.schema, tableName);
             addEditorTab();
             const newTab = state.editors[state.editors.length - 1];
             if (newTab && newTab.model) newTab.model.setValue(sql);
@@ -3500,11 +3601,49 @@ function menuErdImport() {
 }
 
 // ============================================================
+// Fast Tooltips — migrate native [title] to [data-tooltip] so CSS
+// ::after can render without the browser's ~500ms delay.
+// ============================================================
+function migrateTooltip(el) {
+    if (!el || el.nodeType !== 1) return;
+    const t = el.getAttribute && el.getAttribute('title');
+    if (t && !el.hasAttribute('data-tooltip')) {
+        el.setAttribute('data-tooltip', t);
+        el.removeAttribute('title');
+    }
+}
+
+function initFastTooltips() {
+    document.querySelectorAll('[title]').forEach(migrateTooltip);
+    const observer = new MutationObserver(mutations => {
+        for (const m of mutations) {
+            if (m.type === 'attributes' && m.attributeName === 'title') {
+                migrateTooltip(m.target);
+            } else if (m.type === 'childList') {
+                m.addedNodes.forEach(node => {
+                    if (node.nodeType !== 1) return;
+                    migrateTooltip(node);
+                    if (node.querySelectorAll) node.querySelectorAll('[title]').forEach(migrateTooltip);
+                });
+            }
+        }
+    });
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['title'],
+    });
+}
+
+// ============================================================
 // Event Handlers
 // ============================================================
 function initEventHandlers() {
     document.getElementById('btn-add-conn').onclick = () => showConnectionDialog();
-    document.getElementById('btn-run').onclick = executeQuery;
+    document.getElementById('btn-run').onclick = () => executeQuery(false);
+    const btnRunAll = document.getElementById('btn-run-all');
+    if (btnRunAll) btnRunAll.onclick = () => executeQuery(true);
     document.getElementById('btn-explain').onclick = () => executeExplain(false);
     document.getElementById('btn-explain-analyze').onclick = () => executeExplain(true);
     document.getElementById('btn-format').onclick = formatSql;
@@ -4092,7 +4231,8 @@ function initNotesManager() {
 // Command Palette
 // ============================================================
 const CMD_PALETTE_COMMANDS = [
-    { name: 'Run Query', shortcut: 'Ctrl+Enter', action: executeQuery },
+    { name: 'Run Query (cursor/selection)', shortcut: 'Ctrl+Enter', action: () => executeQuery(false) },
+    { name: 'Run All Queries', shortcut: 'Ctrl+Shift+Enter', action: () => executeQuery(true) },
     { name: 'Explain', shortcut: 'Ctrl+E', action: () => executeExplain(false) },
     { name: 'Explain Analyze', shortcut: 'Ctrl+Shift+E', action: () => executeExplain(true) },
     { name: 'Format SQL', shortcut: 'Ctrl+Shift+F', action: formatSql },
@@ -5336,6 +5476,7 @@ function initHistoryManager() {
 // ============================================================
 document.addEventListener('DOMContentLoaded', () => {
     initTheme();
+    initFastTooltips();
     initEventHandlers();
     initTunnelManager();
     initNotesManager();
