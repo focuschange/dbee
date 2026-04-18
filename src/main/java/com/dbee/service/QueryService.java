@@ -42,13 +42,18 @@ public class QueryService {
 
     public QueryResult execute(String connectionId, String sql, int maxRows, String executionId) {
         ConnectionInfo info = connectionService.getConnection(connectionId);
-        DataSource ds = connectionManager.getOrCreate(info);
-        QueryResult result = queryExecutor.execute(ds, sql, maxRows, executionId);
-
-        // Auto-reconnect: if connection error, retry once
-        if (result.isError() && isConnectionError(result.getErrorMessage())) {
-            ds = connectionManager.reconnect(info);
+        QueryResult result;
+        if (info.getDatabaseType() == DatabaseType.ELASTICSEARCH) {
+            result = connectionManager.getElasticSearchClient(info).executeSql(sql, maxRows);
+        } else {
+            DataSource ds = connectionManager.getOrCreate(info);
             result = queryExecutor.execute(ds, sql, maxRows, executionId);
+
+            // Auto-reconnect: if connection error, retry once
+            if (result.isError() && isConnectionError(result.getErrorMessage())) {
+                ds = connectionManager.reconnect(info);
+                result = queryExecutor.execute(ds, sql, maxRows, executionId);
+            }
         }
 
         // Audit log
@@ -72,6 +77,9 @@ public class QueryService {
 
     public QueryResult explain(String connectionId, String sql, boolean analyze) {
         ConnectionInfo info = connectionService.getConnection(connectionId);
+        if (info.getDatabaseType() == DatabaseType.ELASTICSEARCH) {
+            return QueryResult.ofError("ElasticSearch does not support EXPLAIN", 0);
+        }
         DataSource ds = connectionManager.getOrCreate(info);
         DatabaseDialect dialect = DialectFactory.getDialect(info.getDatabaseType());
 
@@ -112,6 +120,9 @@ public class QueryService {
         }
 
         ConnectionInfo info = connectionService.getConnection(connectionId);
+        if (info.getDatabaseType() == DatabaseType.ELASTICSEARCH) {
+            return QueryResult.ofError("ElasticSearch is read-only in DBee (inline editing not supported)", 0);
+        }
         DataSource ds = connectionManager.getOrCreate(info);
 
         // Build UPDATE sql: UPDATE schema.table SET column = ? WHERE pk1 = ? AND pk2 = ?
@@ -159,6 +170,9 @@ public class QueryService {
         }
 
         ConnectionInfo info = connectionService.getConnection(connectionId);
+        if (info.getDatabaseType() == DatabaseType.ELASTICSEARCH) {
+            return QueryResult.ofError("ElasticSearch is read-only in DBee (delete not supported)", 0);
+        }
         DataSource ds = connectionManager.getOrCreate(info);
         String qualifiedTable = qualifyTable(schema, table);
 
@@ -189,6 +203,9 @@ public class QueryService {
         }
 
         ConnectionInfo info = connectionService.getConnection(connectionId);
+        if (info.getDatabaseType() == DatabaseType.ELASTICSEARCH) {
+            return QueryResult.ofError("ElasticSearch is read-only in DBee (insert not supported)", 0);
+        }
         DataSource ds = connectionManager.getOrCreate(info);
         String qualifiedTable = qualifyTable(schema, table);
 

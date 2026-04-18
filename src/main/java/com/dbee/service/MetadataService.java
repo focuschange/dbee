@@ -3,6 +3,7 @@ package com.dbee.service;
 import com.dbee.db.ConnectionManager;
 import com.dbee.db.DialectFactory;
 import com.dbee.db.MetadataReader;
+import com.dbee.db.es.ElasticSearchClient;
 import com.dbee.model.*;
 import org.springframework.stereotype.Service;
 
@@ -29,8 +30,15 @@ public class MetadataService {
         this.connectionService = connectionService;
     }
 
+    private boolean isEs(ConnectionInfo info) {
+        return info.getDatabaseType() == DatabaseType.ELASTICSEARCH;
+    }
+
     public List<SchemaInfo> getSchemas(String connectionId) {
         ConnectionInfo info = connectionService.getConnection(connectionId);
+        if (isEs(info)) {
+            return connectionManager.getElasticSearchClient(info).getSchemas();
+        }
         DataSource ds = connectionManager.getOrCreate(info);
         try (Connection conn = ds.getConnection()) {
             MetadataReader reader = DialectFactory.getDialect(info.getDatabaseType())
@@ -43,6 +51,9 @@ public class MetadataService {
 
     public List<TableInfo> getTables(String connectionId, String schema) {
         ConnectionInfo info = connectionService.getConnection(connectionId);
+        if (isEs(info)) {
+            return connectionManager.getElasticSearchClient(info).listIndices();
+        }
         DataSource ds = connectionManager.getOrCreate(info);
         try (Connection conn = ds.getConnection()) {
             MetadataReader reader = DialectFactory.getDialect(info.getDatabaseType())
@@ -55,6 +66,9 @@ public class MetadataService {
 
     public List<ColumnInfo> getColumns(String connectionId, String schema, String table) {
         ConnectionInfo info = connectionService.getConnection(connectionId);
+        if (isEs(info)) {
+            return connectionManager.getElasticSearchClient(info).getColumns(table);
+        }
         DataSource ds = connectionManager.getOrCreate(info);
         try (Connection conn = ds.getConnection()) {
             MetadataReader reader = DialectFactory.getDialect(info.getDatabaseType())
@@ -67,6 +81,7 @@ public class MetadataService {
 
     public List<RoutineInfo> getRoutines(String connectionId, String schema) {
         ConnectionInfo info = connectionService.getConnection(connectionId);
+        if (isEs(info)) return List.of();
         DataSource ds = connectionManager.getOrCreate(info);
         try (Connection conn = ds.getConnection()) {
             MetadataReader reader = DialectFactory.getDialect(info.getDatabaseType())
@@ -79,6 +94,24 @@ public class MetadataService {
 
     public AutoCompleteMetadataDto getAutoCompleteMetadata(String connectionId) {
         ConnectionInfo info = connectionService.getConnection(connectionId);
+        if (isEs(info)) {
+            ElasticSearchClient client = connectionManager.getElasticSearchClient(info);
+            List<SchemaInfo> schemas = client.getSchemas();
+            List<SchemaDto> schemaDtos = new ArrayList<>();
+            for (SchemaInfo schema : schemas) {
+                List<TableInfo> tables = client.listIndices();
+                List<TableDto> tableDtos = new ArrayList<>();
+                for (TableInfo table : tables) {
+                    List<ColumnInfo> columns = client.getColumns(table.name());
+                    List<ColumnDto> columnDtos = columns.stream()
+                            .map(c -> new ColumnDto(c.name(), c.typeName()))
+                            .toList();
+                    tableDtos.add(new TableDto(table.name(), table.type(), columnDtos));
+                }
+                schemaDtos.add(new SchemaDto(schema.name(), tableDtos));
+            }
+            return new AutoCompleteMetadataDto(schemaDtos);
+        }
         DataSource ds = connectionManager.getOrCreate(info);
         try (Connection conn = ds.getConnection()) {
             MetadataReader reader = DialectFactory.getDialect(info.getDatabaseType())
@@ -109,6 +142,7 @@ public class MetadataService {
 
     public List<PrimaryKeyInfo> getPrimaryKeys(String connectionId, String schema, String table) {
         ConnectionInfo info = connectionService.getConnection(connectionId);
+        if (isEs(info)) return List.of();
         DataSource ds = connectionManager.getOrCreate(info);
         try (Connection conn = ds.getConnection()) {
             MetadataReader reader = DialectFactory.getDialect(info.getDatabaseType())
@@ -121,6 +155,7 @@ public class MetadataService {
 
     public List<IndexInfo> getIndexes(String connectionId, String schema, String table) {
         ConnectionInfo info = connectionService.getConnection(connectionId);
+        if (isEs(info)) return List.of();
         DataSource ds = connectionManager.getOrCreate(info);
         try (Connection conn = ds.getConnection()) {
             MetadataReader reader = DialectFactory.getDialect(info.getDatabaseType())
@@ -133,6 +168,9 @@ public class MetadataService {
 
     public String getTableDdl(String connectionId, String schema, String table) {
         ConnectionInfo info = connectionService.getConnection(connectionId);
+        if (isEs(info)) {
+            return reconstructDdl(connectionId, schema, table);
+        }
         DataSource ds = connectionManager.getOrCreate(info);
         var dialect = DialectFactory.getDialect(info.getDatabaseType());
         String ddlQuery = dialect.getShowCreateTableQuery(schema, table);
@@ -180,6 +218,7 @@ public class MetadataService {
 
     public List<java.util.Map<String, String>> getForeignKeys(String connectionId, String schema, String table) {
         ConnectionInfo info = connectionService.getConnection(connectionId);
+        if (isEs(info)) return List.of();
         DataSource ds = connectionManager.getOrCreate(info);
         try (Connection conn = ds.getConnection()) {
             MetadataReader reader = DialectFactory.getDialect(info.getDatabaseType())
@@ -196,6 +235,9 @@ public class MetadataService {
      */
     public Map<String, Object> generateErGraph(String connectionId, String schema) {
         ConnectionInfo info = connectionService.getConnection(connectionId);
+        if (isEs(info)) {
+            return buildEsErGraph(info, schema);
+        }
         DataSource ds = connectionManager.getOrCreate(info);
         try (Connection conn = ds.getConnection()) {
             MetadataReader reader = DialectFactory.getDialect(info.getDatabaseType())
@@ -269,8 +311,55 @@ public class MetadataService {
         }
     }
 
+    private Map<String, Object> buildEsErGraph(ConnectionInfo info, String schema) {
+        ElasticSearchClient client = connectionManager.getElasticSearchClient(info);
+        List<TableInfo> tables = client.listIndices();
+        List<Map<String, Object>> nodes = new ArrayList<>();
+        for (TableInfo table : tables) {
+            List<ColumnInfo> cols = client.getColumns(table.name());
+            List<Map<String, Object>> columnList = new ArrayList<>();
+            for (ColumnInfo col : cols) {
+                Map<String, Object> c = new HashMap<>();
+                c.put("name", col.name());
+                c.put("type", col.typeName());
+                c.put("size", col.size());
+                c.put("nullable", col.nullable());
+                c.put("pk", false);
+                c.put("fk", false);
+                columnList.add(c);
+            }
+            Map<String, Object> node = new HashMap<>();
+            node.put("id", table.name());
+            node.put("label", table.name());
+            node.put("schema", schema);
+            node.put("columns", columnList);
+            node.put("comment", "");
+            nodes.add(node);
+        }
+        Map<String, Object> result = new HashMap<>();
+        result.put("schema", schema);
+        result.put("nodes", nodes);
+        result.put("edges", List.of());
+        return result;
+    }
+
     public String generateErDiagram(String connectionId, String schema) {
         ConnectionInfo info = connectionService.getConnection(connectionId);
+        if (isEs(info)) {
+            ElasticSearchClient client = connectionManager.getElasticSearchClient(info);
+            List<TableInfo> tables = client.listIndices();
+            StringBuilder mermaid = new StringBuilder("erDiagram\n");
+            for (TableInfo table : tables) {
+                List<ColumnInfo> cols = client.getColumns(table.name());
+                mermaid.append("    ").append(table.name()).append(" {\n");
+                for (ColumnInfo col : cols) {
+                    mermaid.append("        ").append(col.typeName().replaceAll("[\\s()]", "_"))
+                            .append(" ").append(col.name()).append("\n");
+                }
+                mermaid.append("    }\n");
+            }
+            return mermaid.toString();
+        }
         DataSource ds = connectionManager.getOrCreate(info);
         try (Connection conn = ds.getConnection()) {
             MetadataReader reader = DialectFactory.getDialect(info.getDatabaseType())
@@ -308,6 +397,7 @@ public class MetadataService {
 
     public List<EventInfo> getEvents(String connectionId, String schema) {
         ConnectionInfo info = connectionService.getConnection(connectionId);
+        if (isEs(info)) return List.of();
         DataSource ds = connectionManager.getOrCreate(info);
         try (Connection conn = ds.getConnection()) {
             MetadataReader reader = DialectFactory.getDialect(info.getDatabaseType())
