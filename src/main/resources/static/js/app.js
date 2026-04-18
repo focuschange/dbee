@@ -207,6 +207,11 @@ function initMonaco() {
             toggleAiChatPanel();
         });
 
+        // Ctrl+Shift+R to toggle Right Panel
+        monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyR, () => {
+            if (typeof RightPanel !== 'undefined') RightPanel.toggle();
+        });
+
         // Add AI context menu actions
         monacoEditor.addAction({ id: 'ai-explain', label: 'AI: Explain SQL', contextMenuGroupId: 'ai', run: aiExplainSql });
         monacoEditor.addAction({ id: 'ai-optimize', label: 'AI: Optimize SQL', contextMenuGroupId: 'ai', run: aiOptimizeSql });
@@ -1145,7 +1150,12 @@ function createTableNode(connId, schema, table) {
 
     let loaded = false;
     const content = node.querySelector('.tree-node-content');
-    content.onclick = () => selectTreeNode(content);
+    content.onclick = () => {
+        selectTreeNode(content);
+        if (typeof Inspector !== 'undefined') {
+            Inspector.show({ type: 'table', connId, schema, table: table.name });
+        }
+    };
 
     content.ondblclick = () => {
         if (monacoEditor) {
@@ -2433,6 +2443,490 @@ async function exportData(format) {
 async function exportCsv() { return exportData('csv'); }
 
 // ============================================================
+// Global Right Panel (#99)
+// ============================================================
+const RightPanel = (() => {
+    const LS_OPEN = 'dbee.rightPanel.open';
+    const LS_ACTIVE = 'dbee.rightPanel.activeTab';
+    const LS_WIDTH = 'dbee.rightPanel.width';
+    const MIN_WIDTH = 240;
+    const MAX_WIDTH = 720;
+    const DEFAULT_WIDTH = 320;
+
+    const tabs = new Map();
+    let panelEl, resizerEl, tabListEl, bodyEl, closeBtn, toggleBtn;
+    let activeId = null;
+    let isOpen = false;
+    let ready = false;
+
+    function readWidth() {
+        const v = parseInt(localStorage.getItem(LS_WIDTH), 10);
+        if (!isFinite(v)) return DEFAULT_WIDTH;
+        return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, v));
+    }
+
+    function applyOpenState() {
+        if (!panelEl) return;
+        if (isOpen) {
+            panelEl.classList.remove('grp-hidden');
+            resizerEl.classList.remove('grp-hidden');
+            toggleBtn && toggleBtn.classList.add('active');
+        } else {
+            panelEl.classList.add('grp-hidden');
+            resizerEl.classList.add('grp-hidden');
+            toggleBtn && toggleBtn.classList.remove('active');
+        }
+        try { localStorage.setItem(LS_OPEN, isOpen ? '1' : '0'); } catch (e) {}
+    }
+
+    function renderTabButtons() {
+        if (!tabListEl) return;
+        tabListEl.innerHTML = '';
+        for (const t of tabs.values()) {
+            const btn = document.createElement('button');
+            btn.className = 'grp-tab' + (t.id === activeId ? ' active' : '');
+            btn.setAttribute('role', 'tab');
+            btn.setAttribute('data-tab-id', t.id);
+            btn.setAttribute('aria-selected', t.id === activeId ? 'true' : 'false');
+            btn.title = t.tooltip || t.label;
+            if (t.icon) btn.insertAdjacentHTML('beforeend', t.icon);
+            const label = document.createElement('span');
+            label.textContent = t.label;
+            btn.appendChild(label);
+            btn.onclick = () => setActive(t.id);
+            t.btnEl = btn;
+            tabListEl.appendChild(btn);
+        }
+    }
+
+    function ensurePane(tab) {
+        if (!tab.paneEl) {
+            const pane = document.createElement('div');
+            pane.className = 'grp-tab-pane';
+            pane.setAttribute('data-tab-pane', tab.id);
+            bodyEl.appendChild(pane);
+            tab.paneEl = pane;
+        }
+        if (!tab.mounted && typeof tab.render === 'function') {
+            try { tab.render(tab.paneEl); }
+            catch (e) { console.error('[RightPanel] tab render error', tab.id, e); }
+            tab.mounted = true;
+        }
+    }
+
+    function showActivePane() {
+        if (!bodyEl) return;
+        bodyEl.querySelectorAll('.grp-tab-pane').forEach(p => p.classList.remove('active'));
+        tabListEl.querySelectorAll('.grp-tab').forEach(b => {
+            const id = b.getAttribute('data-tab-id');
+            b.classList.toggle('active', id === activeId);
+            b.setAttribute('aria-selected', id === activeId ? 'true' : 'false');
+        });
+        if (!activeId) return;
+        const tab = tabs.get(activeId);
+        if (!tab) return;
+        ensurePane(tab);
+        tab.paneEl.classList.add('active');
+    }
+
+    function setActive(tabId) {
+        if (!tabs.has(tabId)) return;
+        activeId = tabId;
+        try { localStorage.setItem(LS_ACTIVE, tabId); } catch (e) {}
+        showActivePane();
+    }
+
+    function open(tabId) {
+        if (!ready) { isOpen = true; return; }
+        if (tabId && tabs.has(tabId)) {
+            activeId = tabId;
+            try { localStorage.setItem(LS_ACTIVE, tabId); } catch (e) {}
+        } else if (!activeId && tabs.size > 0) {
+            activeId = tabs.keys().next().value;
+        }
+        isOpen = true;
+        applyOpenState();
+        showActivePane();
+    }
+
+    function close() {
+        isOpen = false;
+        applyOpenState();
+    }
+
+    function toggle() {
+        if (isOpen) close(); else open();
+    }
+
+    function setWidth(px) {
+        const w = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, Math.round(px)));
+        if (panelEl) panelEl.style.width = w + 'px';
+        try { localStorage.setItem(LS_WIDTH, String(w)); } catch (e) {}
+    }
+
+    function registerTab(tab) {
+        if (!tab || !tab.id || !tab.label) {
+            throw new Error('RightPanel.registerTab requires {id, label}');
+        }
+        tabs.set(tab.id, {
+            id: tab.id,
+            label: tab.label,
+            tooltip: tab.tooltip || '',
+            icon: tab.icon || '',
+            render: tab.render,
+            mounted: false,
+            paneEl: null,
+            btnEl: null,
+        });
+        if (ready) {
+            renderTabButtons();
+            if (isOpen) showActivePane();
+        }
+    }
+
+    function initResize() {
+        let resizing = false;
+        resizerEl.addEventListener('mousedown', (e) => {
+            resizing = true;
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+            e.preventDefault();
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!resizing) return;
+            const w = window.innerWidth - e.clientX;
+            setWidth(w);
+        });
+        document.addEventListener('mouseup', () => {
+            if (resizing) {
+                resizing = false;
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+            }
+        });
+    }
+
+    function init() {
+        panelEl = document.getElementById('global-right-panel');
+        resizerEl = document.getElementById('global-right-resizer');
+        tabListEl = document.getElementById('grp-tab-list');
+        bodyEl = document.getElementById('grp-body');
+        closeBtn = document.getElementById('grp-close');
+        toggleBtn = document.getElementById('btn-toggle-right-panel');
+
+        if (!panelEl) return;
+
+        panelEl.style.width = readWidth() + 'px';
+
+        const savedActive = localStorage.getItem(LS_ACTIVE);
+        if (savedActive) activeId = savedActive;
+        const savedOpen = localStorage.getItem(LS_OPEN) === '1';
+
+        closeBtn && (closeBtn.onclick = close);
+        initResize();
+
+        // Built-in placeholder tab — future tabs (#100~#107) may replace/extend
+        registerTab({
+            id: 'inspector',
+            label: 'Inspector',
+            icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+            render: (el) => {
+                el.innerHTML = '<div class="grp-empty">'
+                    + '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>'
+                    + '<div>컨텍스트 정보가 여기에 표시됩니다.</div>'
+                    + '<div style="font-size:11px;opacity:0.7">테이블·행·쿼리 선택 시 상세 정보 (후속 작업)</div>'
+                    + '</div>';
+            },
+        });
+
+        ready = true;
+        renderTabButtons();
+
+        if (savedOpen) {
+            open(activeId);
+        } else {
+            applyOpenState();
+        }
+    }
+
+    return { init, registerTab, open, close, toggle, setActive, setWidth };
+})();
+
+// ============================================================
+// Helper: insert SQL into current SQL editor (or open new tab if ERD active)
+// ============================================================
+function insertSqlSmart(sql) {
+    if (!sql) return;
+    const active = state.editors ? state.editors.find(t => t.id === state.activeEditorId) : null;
+    const isSqlTab = active && active.type === 'sql';
+    if (!isSqlTab) {
+        addEditorTab();
+    }
+    if (typeof monacoEditor === 'undefined' || !monacoEditor) return;
+    const sel = monacoEditor.getSelection();
+    const model = monacoEditor.getModel();
+    // If editor is empty, just set; otherwise insert at cursor/selection
+    if (!model.getValue().trim()) {
+        monacoEditor.setValue(sql);
+    } else {
+        monacoEditor.executeEdits('smart-insert', [{
+            range: sel,
+            text: sql,
+            forceMoveMarkers: true,
+        }]);
+    }
+    monacoEditor.focus();
+}
+
+// ============================================================
+// Inspector Tab (#100)
+// ============================================================
+const Inspector = (() => {
+    let rootEl = null;
+    let current = null; // { type:'table', connId, schema, table }
+
+    function show(target) {
+        current = target;
+        if (rootEl) renderContent();
+    }
+
+    function clear() {
+        current = null;
+        if (rootEl) renderContent();
+    }
+
+    function renderEmpty() {
+        rootEl.innerHTML = `
+            <div class="grp-empty">
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <div>선택된 대상이 없습니다.</div>
+                <div style="font-size:11px;opacity:0.7">Explorer에서 테이블을 클릭하면 컬럼·인덱스 정보가 표시됩니다.</div>
+            </div>`;
+    }
+
+    function renderLoading(target) {
+        rootEl.innerHTML = `
+            <div class="insp-header">
+                <div class="insp-title">${escapeHtml(target.schema)}.<strong>${escapeHtml(target.table)}</strong></div>
+            </div>
+            <div class="insp-section"><div class="insp-loading">Loading…</div></div>`;
+    }
+
+    async function renderTable(target) {
+        renderLoading(target);
+        let columns = [], indexes = [];
+        try { columns = await api.metadata.columns(target.connId, target.schema, target.table); } catch (e) {}
+        try { indexes = await api.metadata.indexes(target.connId, target.schema, target.table); } catch (e) {}
+        if (current !== target) return; // target changed during load
+
+        const pkCols = new Set(columns.filter(c => c.primaryKey || c.pk).map(c => c.name));
+        const colRows = columns.map(c => {
+            const isPk = pkCols.has(c.name) || c.primaryKey || c.pk;
+            const nullable = (c.nullable === true || c.nullable === 'YES' || c.isNullable === true) ? 'YES' : 'NO';
+            return `<tr>
+                <td>${isPk ? '<span class="insp-pk" title="Primary Key">PK</span>' : ''}</td>
+                <td>${escapeHtml(c.name || '')}</td>
+                <td class="insp-type">${escapeHtml(c.typeName || c.type || '')}</td>
+                <td class="insp-nullable">${nullable}</td>
+            </tr>`;
+        }).join('');
+
+        const idxRows = (indexes || []).map(ix => {
+            const cols = (ix.columnNames || ix.columns || []).join(', ');
+            const tag = ix.unique ? '<span class="insp-badge insp-badge-uniq">UNIQUE</span>' : '';
+            return `<tr>
+                <td>${escapeHtml(ix.name || '')}</td>
+                <td>${escapeHtml(cols)}</td>
+                <td>${tag}</td>
+            </tr>`;
+        }).join('');
+
+        rootEl.innerHTML = `
+            <div class="insp-header">
+                <div class="insp-title">${escapeHtml(target.schema)}.<strong>${escapeHtml(target.table)}</strong></div>
+                <div class="insp-sub">${columns.length} columns · ${(indexes||[]).length} indexes</div>
+                <div class="insp-actions">
+                    <button class="btn btn-ghost btn-sm insp-btn-select">SELECT *</button>
+                    <button class="btn btn-ghost btn-sm insp-btn-ddl">DDL</button>
+                </div>
+            </div>
+            <div class="insp-section">
+                <div class="insp-section-title">Columns</div>
+                <table class="insp-table">
+                    <thead><tr><th></th><th>Name</th><th>Type</th><th>Nullable</th></tr></thead>
+                    <tbody>${colRows || '<tr><td colspan="4" class="insp-empty-row">(no columns)</td></tr>'}</tbody>
+                </table>
+            </div>
+            <div class="insp-section">
+                <div class="insp-section-title">Indexes</div>
+                <table class="insp-table">
+                    <thead><tr><th>Name</th><th>Columns</th><th>Unique</th></tr></thead>
+                    <tbody>${idxRows || '<tr><td colspan="3" class="insp-empty-row">(no indexes)</td></tr>'}</tbody>
+                </table>
+            </div>`;
+
+        rootEl.querySelector('.insp-btn-select').onclick = () => {
+            insertSqlSmart(`SELECT * FROM ${target.schema}.${target.table} LIMIT 100;`);
+        };
+        rootEl.querySelector('.insp-btn-ddl').onclick = async () => {
+            try {
+                const res = await api.metadata.ddl(target.connId, target.schema, target.table);
+                if (res && res.ddl) insertSqlSmart(res.ddl);
+            } catch (e) {
+                updateStatus('Failed to load DDL: ' + e.message, true);
+            }
+        };
+    }
+
+    function renderContent() {
+        if (!current) { renderEmpty(); return; }
+        if (current.type === 'table') { renderTable(current); return; }
+        renderEmpty();
+    }
+
+    function render(el) {
+        rootEl = el;
+        el.classList.add('insp-root');
+        renderContent();
+    }
+
+    return { render, show, clear };
+})();
+
+// ============================================================
+// History Tab (#102)
+// ============================================================
+const HistoryTab = (() => {
+    let rootEl = null;
+    let section = 'recent'; // 'recent' | 'saved'
+
+    function insertSqlIntoEditor(sql) {
+        insertSqlSmart(sql);
+    }
+
+    async function refresh() {
+        const listEl = rootEl.querySelector('.hist-list');
+        if (!listEl) return;
+        listEl.innerHTML = '<div class="hist-loading">Loading…</div>';
+        try {
+            if (section === 'recent') {
+                const items = await api.history.list('', 30);
+                renderRecent(items || []);
+            } else {
+                const items = await api.savedQueries.list();
+                renderSaved(items || []);
+            }
+        } catch (e) {
+            listEl.innerHTML = `<div class="hist-empty">Failed to load: ${escapeHtml(e.message)}</div>`;
+        }
+    }
+
+    function renderRecent(items) {
+        const listEl = rootEl.querySelector('.hist-list');
+        if (items.length === 0) {
+            listEl.innerHTML = '<div class="hist-empty">No recent queries.</div>';
+            return;
+        }
+        listEl.innerHTML = '';
+        items.forEach(it => {
+            const el = document.createElement('div');
+            el.className = 'hist-item' + (it.error ? ' hist-item-error' : '');
+            el.innerHTML = `
+                <div class="hist-item-sql">${escapeHtml((it.sql || '').slice(0, 200))}</div>
+                <div class="hist-item-meta">
+                    <span>${typeof formatRelativeTime === 'function' ? formatRelativeTime(it.executedAt) : ''}</span>
+                    <span>${escapeHtml(it.connectionName || '')}</span>
+                    <span>${it.executionTimeMs != null ? it.executionTimeMs + 'ms' : ''}</span>
+                </div>`;
+            el.onclick = () => insertSqlIntoEditor(it.sql);
+            listEl.appendChild(el);
+        });
+    }
+
+    function renderSaved(items) {
+        const listEl = rootEl.querySelector('.hist-list');
+        if (items.length === 0) {
+            listEl.innerHTML = '<div class="hist-empty">No saved queries.<br><span style="opacity:0.7">Ctrl+S로 현재 쿼리 저장 가능</span></div>';
+            return;
+        }
+        listEl.innerHTML = '';
+        items.forEach(it => {
+            const el = document.createElement('div');
+            el.className = 'hist-item';
+            el.innerHTML = `
+                <div class="hist-item-name">${escapeHtml(it.name || '(untitled)')}</div>
+                <div class="hist-item-sql">${escapeHtml((it.sql || '').slice(0, 200))}</div>`;
+            el.onclick = () => insertSqlIntoEditor(it.sql);
+            listEl.appendChild(el);
+        });
+    }
+
+    function setSection(s) {
+        section = s;
+        rootEl.querySelectorAll('.hist-section-btn').forEach(b => {
+            b.classList.toggle('active', b.dataset.section === s);
+        });
+        refresh();
+    }
+
+    function render(el) {
+        rootEl = el;
+        el.classList.add('hist-root');
+        el.innerHTML = `
+            <div class="hist-switcher">
+                <button class="hist-section-btn active" data-section="recent">Recent</button>
+                <button class="hist-section-btn" data-section="saved">Saved</button>
+                <button class="hist-refresh-btn" title="Refresh">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                </button>
+            </div>
+            <div class="hist-list"></div>`;
+        el.querySelectorAll('.hist-section-btn').forEach(b => {
+            b.onclick = () => setSection(b.dataset.section);
+        });
+        el.querySelector('.hist-refresh-btn').onclick = () => refresh();
+        refresh();
+    }
+
+    return { render, refresh };
+})();
+
+// ============================================================
+// AI Chat Tab (#101) — migrates existing overlay into RightPanel tab
+// ============================================================
+const AiChatTab = (() => {
+    let migrated = false;
+
+    function render(el) {
+        if (migrated) {
+            // Re-attach existing nodes if rendered before (tab re-mount fallback)
+            return;
+        }
+        const overlay = document.getElementById('ai-chat-panel');
+        if (!overlay) return;
+
+        // Hide the close button in the migrated header (panel close handled by grp-close)
+        const closeBtn = overlay.querySelector('#btn-ai-chat-close');
+        if (closeBtn) closeBtn.style.display = 'none';
+
+        // Move all child nodes from overlay into tab pane
+        while (overlay.firstChild) {
+            el.appendChild(overlay.firstChild);
+        }
+        // Hide the now-empty overlay wrapper
+        overlay.style.display = 'none';
+        el.classList.add('ai-chat-pane');
+        migrated = true;
+
+        // Focus input when visible
+        const input = document.getElementById('ai-chat-input');
+        if (input) setTimeout(() => input.focus(), 50);
+    }
+
+    return { render };
+})();
+
+// ============================================================
 // Resizers
 // ============================================================
 function initResizers() {
@@ -3146,6 +3640,13 @@ function initEventHandlers() {
             return;
         }
 
+        // Ctrl/Cmd+Shift+R — Toggle Right Panel (overrides browser hard-refresh)
+        if (mod && e.shiftKey && (e.key === 'R' || e.key === 'r')) {
+            e.preventDefault();
+            if (typeof RightPanel !== 'undefined') RightPanel.toggle();
+            return;
+        }
+
         // Ctrl/Cmd+S — Save current query
         if (mod && e.key === 's') {
             e.preventDefault();
@@ -3604,6 +4105,7 @@ const CMD_PALETTE_COMMANDS = [
     { name: 'Export SQL INSERT', action: () => exportData('insert') },
     { name: 'Query History', shortcut: 'Alt+H', action: showHistoryDialog },
     { name: 'AI Chat', shortcut: 'Ctrl+Shift+A', action: toggleAiChatPanel },
+    { name: 'Toggle Right Panel', shortcut: 'Ctrl+Shift+R', action: () => { if (typeof RightPanel !== 'undefined') RightPanel.toggle(); } },
     { name: 'AI Settings', action: showAiSettingsDialog },
     { name: 'AI: Explain SQL', action: aiExplainSql },
     { name: 'AI: Optimize SQL', action: aiOptimizeSql },
@@ -4168,19 +4670,18 @@ async function aiAnalyzeResult() {
 }
 
 // ============================================================
-// AI Chat Panel
+// AI Chat Panel — now backed by RightPanel 'ai' tab (#101)
 // ============================================================
 function toggleAiChatPanel() {
-    const panel = document.getElementById('ai-chat-panel');
-    const isVisible = panel.style.display !== 'none';
-    panel.style.display = isVisible ? 'none' : 'flex';
-    if (!isVisible) {
-        document.getElementById('ai-chat-input').focus();
+    if (typeof RightPanel !== 'undefined') {
+        RightPanel.open('ai');
+        const input = document.getElementById('ai-chat-input');
+        if (input) setTimeout(() => input.focus(), 50);
     }
 }
 
 function closeAiChatPanel() {
-    document.getElementById('ai-chat-panel').style.display = 'none';
+    if (typeof RightPanel !== 'undefined') RightPanel.close();
 }
 
 function saveAiChatHistory() {
@@ -4232,7 +4733,9 @@ function appendChatMessage(role, content, sql) {
     if (role === 'user') {
         msgDiv.innerHTML = `<div class="ai-msg-content">${escapeHtml(content)}</div>`;
     } else if (role === 'assistant') {
-        let html = `<div class="ai-msg-content">${formatAiMessage(content)}</div>`;
+        // If SQL is rendered separately below, strip fenced code blocks from the prose
+        const proseText = sql ? (content || '').replace(/```[a-zA-Z]*\s*\n?[\s\S]*?```/g, '').trim() : content;
+        let html = `<div class="ai-msg-content">${formatAiMessage(proseText)}</div>`;
         if (sql) {
             html += `<div class="ai-msg-sql">
                 <div class="ai-sql-header">
@@ -4335,8 +4838,9 @@ async function sendAiChatMessage() {
 
     document.getElementById('btn-ai-chat-send').disabled = true;
 
+    const payload = (typeof aiLanguageInstruction === 'function' ? aiLanguageInstruction() : '') + message;
     try {
-        const result = await api.llm.chat(state.activeConnectionId, message);
+        const result = await api.llm.chat(state.activeConnectionId, payload);
         loadingMsg.remove();
 
         if (result.error) {
@@ -4360,6 +4864,8 @@ function initAiChat() {
 
     const chatInput = document.getElementById('ai-chat-input');
     chatInput.onkeydown = (e) => {
+        // Skip while IME composition is active (Korean/Japanese/Chinese input)
+        if (e.isComposing || e.keyCode === 229) return;
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             sendAiChatMessage();
@@ -4400,12 +4906,29 @@ async function showAiSettingsDialog() {
         document.getElementById('ai-model').value = settings.model || '';
         document.getElementById('ai-temperature').value = settings.temperature ?? 0.3;
         document.getElementById('ai-temperature-value').textContent = settings.temperature ?? 0.3;
+        const langEl = document.getElementById('ai-language');
+        if (langEl) langEl.value = getAiLanguage();
         updateAiProviderFields();
     } catch (e) {
         console.error('Failed to load AI settings:', e);
     }
 
     document.getElementById('ai-test-result').style.display = 'none';
+}
+
+function getAiLanguage() {
+    return localStorage.getItem('dbee.ai.language') || 'ko';
+}
+
+function setAiLanguage(lang) {
+    try { localStorage.setItem('dbee.ai.language', lang); } catch (e) {}
+}
+
+function aiLanguageInstruction() {
+    const lang = getAiLanguage();
+    if (lang === 'ko') return '한국어로 답변해 주세요. ';
+    if (lang === 'ja') return '日本語で回答してください。';
+    return 'Please respond in English. ';
 }
 
 function closeAiSettingsDialog() {
@@ -4469,6 +4992,8 @@ async function saveAiSettings() {
     const settings = getAiSettingsFromForm();
     try {
         await api.llm.saveSettings(settings);
+        const langEl = document.getElementById('ai-language');
+        if (langEl) setAiLanguage(langEl.value);
         updateStatus('AI settings saved');
         closeAiSettingsDialog();
     } catch (e) {
@@ -4832,6 +5357,29 @@ document.addEventListener('DOMContentLoaded', () => {
     initAiChat();
     initAiSettings();
     initResizers();
+    RightPanel.init();
+    // Register Phase B tabs (overrides placeholder Inspector)
+    RightPanel.registerTab({
+        id: 'inspector',
+        label: 'Inspector',
+        tooltip: 'Inspector — 선택한 테이블/행/쿼리의 상세 정보',
+        icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+        render: (el) => Inspector.render(el),
+    });
+    RightPanel.registerTab({
+        id: 'ai',
+        label: 'AI',
+        tooltip: 'AI Chat (Ctrl+Shift+A)',
+        icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 2.8 4 6 4 6s4-3.2 4-6a4 4 0 0 0-4-4z"/><circle cx="12" cy="6" r="1.5"/></svg>',
+        render: (el) => AiChatTab.render(el),
+    });
+    RightPanel.registerTab({
+        id: 'history',
+        label: 'History',
+        tooltip: 'Query History & Saved Queries',
+        icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+        render: (el) => HistoryTab.render(el),
+    });
     initMonaco();
     loadConnections();
     loadSnippetsCache();
