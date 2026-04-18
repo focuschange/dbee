@@ -277,6 +277,11 @@ function initMonaco() {
             if (typeof RightPanel !== 'undefined') RightPanel.toggle();
         });
 
+        // Ctrl+Shift+K — open the active tab's connection dropdown (#124)
+        monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyK, () => {
+            openActiveTabConnectionMenu();
+        });
+
         // Add AI context menu actions
         monacoEditor.addAction({ id: 'ai-explain', label: 'AI: Explain SQL', contextMenuGroupId: 'ai', run: aiExplainSql });
         monacoEditor.addAction({ id: 'ai-optimize', label: 'AI: Optimize SQL', contextMenuGroupId: 'ai', run: aiOptimizeSql });
@@ -760,11 +765,20 @@ function renderTabs() {
         const typeClass = tab.type === 'erd' ? ' tab-erd' : '';
         div.className = 'tab' + (tab.id === state.activeEditorId ? ' active' : '') + (tab.dirty ? ' dirty' : '') + typeClass;
         const dirtyDot = tab.dirty ? '<span class="tab-dirty-dot">●</span>' : '';
+
+        // Connection chip — shows which DB this tab talks to (#124 Phase B)
+        const chipHtml = renderTabConnectionChip(tab);
+
         div.innerHTML = `
+            ${chipHtml}
             <span class="tab-label">${escapeHtml(tab.name)}${dirtyDot}</span>
             ${state.editors.length > 1 ? '<span class="tab-close">&times;</span>' : ''}
         `;
-        div.querySelector('.tab-label').onclick = () => switchTab(tab.id);
+        div.querySelector('.tab-label').onclick = () => {
+            // Only switch if needed — skipping renderTabs() preserves DOM identity
+            // so the browser's dblclick-for-rename can fire.
+            if (tab.id !== state.activeEditorId) switchTab(tab.id);
+        };
         // Double-click to rename tab
         div.querySelector('.tab-label').ondblclick = (e) => {
             e.stopPropagation();
@@ -782,10 +796,310 @@ function renderTabs() {
             input.onblur = finish;
             input.onkeydown = (ke) => { if (ke.key === 'Enter') input.blur(); if (ke.key === 'Escape') { input.value = tab.name; input.blur(); } };
         };
+        const chipEl = div.querySelector('.tab-conn-chip');
+        if (chipEl) {
+            chipEl.onclick = (e) => {
+                e.stopPropagation();
+                const wasActive = tab.id === state.activeEditorId;
+                if (!wasActive) switchTab(tab.id); // renderTabs() runs → old chipEl becomes detached
+                // Re-query the chip anchor from the freshly rendered tab list
+                openActiveTabConnectionMenu();
+            };
+            attachTabChipTooltip(chipEl);
+        }
         const closeBtn = div.querySelector('.tab-close');
         if (closeBtn) closeBtn.onclick = (e) => { e.stopPropagation(); closeTab(tab.id); };
+
+        // Drag-to-reorder
+        div.draggable = true;
+        div.addEventListener('dragstart', (e) => {
+            e.dataTransfer.setData('text/plain', tab.id);
+            e.dataTransfer.effectAllowed = 'move';
+            div.classList.add('dragging');
+        });
+        div.addEventListener('dragend', () => {
+            div.classList.remove('dragging');
+            document.querySelectorAll('.tab.drop-before, .tab.drop-after')
+                .forEach(el => el.classList.remove('drop-before', 'drop-after'));
+        });
+        div.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            const rect = div.getBoundingClientRect();
+            const before = e.clientX < rect.left + rect.width / 2;
+            div.classList.toggle('drop-before', before);
+            div.classList.toggle('drop-after', !before);
+        });
+        div.addEventListener('dragleave', () => {
+            div.classList.remove('drop-before', 'drop-after');
+        });
+        div.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const draggedId = e.dataTransfer.getData('text/plain');
+            div.classList.remove('drop-before', 'drop-after');
+            if (!draggedId || draggedId === tab.id) return;
+            const rect = div.getBoundingClientRect();
+            const before = e.clientX < rect.left + rect.width / 2;
+            reorderEditorTab(draggedId, tab.id, before);
+        });
+
         tabList.appendChild(div);
     });
+}
+
+function reorderEditorTab(dragId, targetId, placeBefore) {
+    const arr = state.editors;
+    const dragIdx = arr.findIndex(t => t.id === dragId);
+    if (dragIdx < 0) return;
+    const [item] = arr.splice(dragIdx, 1);
+    const targetIdx = arr.findIndex(t => t.id === targetId);
+    if (targetIdx < 0) { arr.splice(dragIdx, 0, item); return; } // safety
+    const insertAt = placeBefore ? targetIdx : targetIdx + 1;
+    arr.splice(insertAt, 0, item);
+    renderTabs();
+    try { saveEditorSession(); } catch (e) {}
+}
+
+function renderTabConnectionChip(tab) {
+    const conn = tab.connId ? state.connections.find(c => c.id === tab.connId) : null;
+    const name = conn ? conn.name : (tab.connName || null);
+    const color = conn?.properties?.color || '';
+    const readonly = tab.type === 'erd';
+    const connected = conn && state.autocompleteCache?.connectionId === conn.id;
+    const cls = 'tab-conn-chip' + (name ? ' has-conn' : ' no-conn') + (readonly ? ' readonly' : '');
+    const style = color ? ` style="--chip-color:${escapeHtml(color)}"` : '';
+
+    // Tooltip: detailed info shown on hover (user explicitly wants the chip itself icon-only).
+    const lines = [];
+    lines.push(`Connection: ${name || '(none)'}`);
+    if (conn) {
+        if (conn.dbType) lines.push(`Type: ${conn.dbType}`);
+        lines.push(`Status: ${connected ? 'connected' : 'not connected'}`);
+    }
+    lines.push(readonly
+        ? '(locked for ERD tabs)'
+        : 'Click to change · Cmd/Ctrl+Shift+K');
+    const title = lines.join('\n');
+
+    return `<span class="${cls}"${style} data-tooltip="${escapeHtml(title)}"><span class="chip-dot"></span></span>`;
+}
+
+// Custom tooltip for the tab connection chip — the browser's built-in
+// `title` tooltip has no position control and gets clipped near the top edge.
+function attachTabChipTooltip(chipEl) {
+    const show = () => {
+        hideTabChipTooltip();
+        const text = chipEl.getAttribute('data-tooltip');
+        if (!text) return;
+        const tip = document.createElement('div');
+        tip.className = 'tab-chip-tooltip';
+        tip.id = 'tab-chip-tooltip';
+        tip.textContent = text;
+        document.body.appendChild(tip);
+
+        const rect = chipEl.getBoundingClientRect();
+        const tipRect = tip.getBoundingClientRect();
+        const gap = 6;
+        // Default below the chip; flip above if it would overflow the viewport.
+        let top = rect.bottom + gap;
+        if (top + tipRect.height > window.innerHeight - 4) top = rect.top - tipRect.height - gap;
+        let left = rect.left + (rect.width / 2) - (tipRect.width / 2);
+        if (left < 4) left = 4;
+        if (left + tipRect.width > window.innerWidth - 4) left = window.innerWidth - tipRect.width - 4;
+        tip.style.top = `${Math.max(4, top)}px`;
+        tip.style.left = `${left}px`;
+    };
+    chipEl.addEventListener('mouseenter', show);
+    chipEl.addEventListener('mouseleave', hideTabChipTooltip);
+    chipEl.addEventListener('mousedown', hideTabChipTooltip);
+}
+
+function hideTabChipTooltip() {
+    const t = document.getElementById('tab-chip-tooltip');
+    if (t) t.remove();
+}
+
+// ============================================================
+// Tab connection dropdown (#124 Phase B)
+// ============================================================
+function showTabConnectionMenu(tabId, anchorEl) {
+    const tab = state.editors.find(t => t.id === tabId);
+    if (!tab) return;
+    if (tab.type === 'erd') return; // ERD tabs are readonly
+
+    hideTabConnectionMenu();
+
+    const menu = document.createElement('div');
+    menu.className = 'tab-conn-menu';
+    menu.id = 'tab-conn-menu';
+
+    const search = document.createElement('input');
+    search.type = 'text';
+    search.className = 'tab-conn-menu-search';
+    search.placeholder = 'Search connection…';
+    menu.appendChild(search);
+
+    const list = document.createElement('div');
+    list.className = 'tab-conn-menu-list';
+    menu.appendChild(list);
+
+    const setActive = (idx) => {
+        const items = list.querySelectorAll('.tab-conn-menu-item');
+        items.forEach((el, i) => el.classList.toggle('active', i === idx));
+        if (items[idx]) items[idx].scrollIntoView({ block: 'nearest' });
+    };
+
+    const currentActiveIdx = () => {
+        const items = list.querySelectorAll('.tab-conn-menu-item');
+        for (let i = 0; i < items.length; i++) if (items[i].classList.contains('active')) return i;
+        return -1;
+    };
+
+    const renderList = (filter) => {
+        list.innerHTML = '';
+        const q = (filter || '').trim().toLowerCase();
+
+        // (None) option — clears the tab's connection
+        const none = document.createElement('div');
+        none.className = 'tab-conn-menu-item' + (!tab.connId ? ' selected' : '');
+        none.innerHTML = `<span class="chip-dot none"></span><span class="menu-item-text">(None)</span>`;
+        none.onclick = () => { pickConnectionForActiveTab(null); hideTabConnectionMenu(); };
+        list.appendChild(none);
+
+        const items = (state.connections || []).filter(c => !q || c.name.toLowerCase().includes(q));
+        items.forEach(conn => {
+            const isSelected = tab.connId === conn.id;
+            const connected = state.autocompleteCache?.connectionId === conn.id;
+            const color = conn.properties?.color || '';
+            const item = document.createElement('div');
+            item.className = 'tab-conn-menu-item' + (isSelected ? ' selected' : '');
+            const dotStyle = color ? ` style="background:${escapeHtml(color)}"` : '';
+            const statusCls = connected ? ' connected' : '';
+            item.innerHTML = `
+                <span class="chip-dot${statusCls}"${dotStyle}></span>
+                <span class="menu-item-text">${escapeHtml(conn.name)}</span>
+                ${connected ? '<span class="menu-item-badge">●</span>' : ''}
+            `;
+            item.onclick = () => { pickConnectionForActiveTab(conn.id); hideTabConnectionMenu(); };
+            list.appendChild(item);
+        });
+
+        if (items.length === 0 && q) {
+            const empty = document.createElement('div');
+            empty.className = 'tab-conn-menu-empty';
+            empty.textContent = 'No matching connection';
+            list.appendChild(empty);
+        }
+
+        // Auto-highlight first item so Enter always has a target.
+        // Prefer a connection row (skip "(None)" when the user is searching).
+        const rendered = list.querySelectorAll('.tab-conn-menu-item');
+        if (rendered.length) {
+            const firstIdx = (q && rendered.length > 1) ? 1 : 0;
+            setActive(firstIdx);
+        }
+    };
+    renderList('');
+
+    // Hover should follow keyboard highlight so the two don't desync.
+    list.addEventListener('mousemove', (e) => {
+        const item = e.target.closest('.tab-conn-menu-item');
+        if (!item) return;
+        const items = Array.from(list.querySelectorAll('.tab-conn-menu-item'));
+        setActive(items.indexOf(item));
+    });
+
+    search.addEventListener('input', () => renderList(search.value));
+    search.addEventListener('keydown', (e) => {
+        const items = list.querySelectorAll('.tab-conn-menu-item');
+        if (e.key === 'Escape') { e.preventDefault(); hideTabConnectionMenu(); return; }
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (!items.length) return;
+            const next = Math.min(currentActiveIdx() + 1, items.length - 1);
+            setActive(Math.max(0, next));
+            return;
+        }
+        if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (!items.length) return;
+            const next = Math.max(currentActiveIdx() - 1, 0);
+            setActive(next);
+            return;
+        }
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            const idx = currentActiveIdx();
+            const target = idx >= 0 ? items[idx] : items[0];
+            if (target) target.click();
+            return;
+        }
+    });
+
+    document.body.appendChild(menu);
+
+    // Position under the anchor (chip element). Fall back to tab list area.
+    const anchor = anchorEl || document.querySelector(`[data-tab-anchor="${tabId}"]`) || document.getElementById('tab-list');
+    const rect = anchor.getBoundingClientRect();
+    const top = rect.bottom + 4;
+    let left = rect.left;
+    const menuWidth = 260;
+    if (left + menuWidth > window.innerWidth) left = window.innerWidth - menuWidth - 8;
+    menu.style.top = `${top}px`;
+    menu.style.left = `${Math.max(8, left)}px`;
+
+    setTimeout(() => search.focus(), 0);
+
+    const onDocClick = (e) => { if (!menu.contains(e.target)) hideTabConnectionMenu(); };
+    const onEsc = (e) => { if (e.key === 'Escape') hideTabConnectionMenu(); };
+    menu._cleanup = () => {
+        document.removeEventListener('mousedown', onDocClick, true);
+        document.removeEventListener('keydown', onEsc, true);
+    };
+    document.addEventListener('mousedown', onDocClick, true);
+    document.addEventListener('keydown', onEsc, true);
+}
+
+function hideTabConnectionMenu() {
+    const existing = document.getElementById('tab-conn-menu');
+    if (!existing) return;
+    try { existing._cleanup && existing._cleanup(); } catch (e) {}
+    existing.remove();
+}
+
+// Called when the user picks a connection from the tab chip dropdown.
+// If the connection isn't open yet, connect first so queries work immediately.
+async function pickConnectionForActiveTab(connId) {
+    if (connId === null) {
+        setActiveTabConnection(null, null);
+        refreshConnectionIndicators(getActiveTab());
+        renderTabs();
+        updateStatus('Connection detached from tab');
+        return;
+    }
+    const conn = state.connections.find(c => c.id === connId);
+    if (!conn) return;
+    try {
+        await api.connections.connect(conn.id);
+        setActiveTabConnection(conn.id, conn.name);
+        refreshConnectionIndicators(getActiveTab());
+        renderTabs();
+        updateStatus(`Connected: ${conn.name}`);
+        loadAutoCompleteCache(conn.id);
+    } catch (e) {
+        updateStatus(`Connection failed: ${e.message}`, true);
+    }
+}
+
+// Keyboard shortcut entry point — opens the dropdown anchored to the active tab's chip.
+function openActiveTabConnectionMenu() {
+    const tab = getActiveTab();
+    if (!tab) return;
+    if (tab.type === 'erd') { updateStatus('ERD tab connection is locked', true); return; }
+    const tabEls = document.querySelectorAll('#tab-list .tab');
+    let anchor = null;
+    state.editors.forEach((t, idx) => { if (t.id === tab.id) anchor = tabEls[idx]?.querySelector('.tab-conn-chip') || tabEls[idx]; });
+    showTabConnectionMenu(tab.id, anchor);
 }
 
 function getCurrentSql() {
@@ -3861,6 +4175,13 @@ function initEventHandlers() {
         if (mod && e.shiftKey && (e.key === 'R' || e.key === 'r')) {
             e.preventDefault();
             if (typeof RightPanel !== 'undefined') RightPanel.toggle();
+            return;
+        }
+
+        // Ctrl/Cmd+Shift+K — open active tab's connection dropdown (#124)
+        if (mod && e.shiftKey && (e.key === 'K' || e.key === 'k')) {
+            e.preventDefault();
+            openActiveTabConnectionMenu();
             return;
         }
 
