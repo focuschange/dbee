@@ -3859,6 +3859,82 @@ body[data-theme="light"] .rf-edge-label {
     overflow: hidden;
 }
 .sess-svr-sql-empty { font-style: italic; color: var(--text-muted); }
+
+/* UX integration (#140 Phase D) */
+.sess-header {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 4px;
+}
+.sess-search { position: relative; display: flex; align-items: center; }
+.sess-search-input {
+    flex: 1;
+    background: var(--bg-base);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 5px 24px 5px 10px;
+    font-size: 12px;
+    color: var(--text-primary);
+    outline: none;
+}
+.sess-search-input:focus { border-color: var(--accent); }
+.sess-search-clear {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 18px;
+    height: 18px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    border-radius: 50%;
+}
+.sess-search-clear:hover { background: var(--bg-hover); color: var(--text-primary); }
+.sess-auto-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 8px;
+    background: var(--bg-elev);
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+.sess-auto-label { flex: 1; }
+.sess-auto-dismiss {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    width: 18px;
+    height: 18px;
+    line-height: 1;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.sess-auto-dismiss:hover { background: var(--bg-hover); color: var(--text-primary); }
+.sess-section-title[data-action="toggle-section"] { cursor: pointer; user-select: none; }
+.sess-section-title-left { display: inline-flex; align-items: center; gap: 6px; }
+.sess-sec-arrow {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 10px;
+    height: 10px;
+    font-size: 9px;
+    color: var(--text-muted);
+    transition: transform 0.15s;
+}
+.sess-sec-arrow.expanded { transform: rotate(90deg); }
+.sess-section-collapsed .sess-section-body[hidden] { display: none !important; }
+
 .sess-running-body { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
 .sess-running-meta { display: flex; gap: 8px; align-items: center; font-size: 11px; color: var(--text-secondary); }
 .sess-running-conn { color: var(--text-primary); font-weight: 500; }
