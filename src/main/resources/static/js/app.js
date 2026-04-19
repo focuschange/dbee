@@ -3419,6 +3419,28 @@ const SessionsTab = (() => {
     let svrAutoRefresh = localStorage.getItem(LS_SVR_AUTO) === '1';
     let lastSvrResponse = null; // { supported, sessions, error, connId, connName }
     let svrLoading = false;
+    // UX integration (#140 Phase D)
+    const LS_SECTIONS = 'dbee.sess.sectionsCollapsed';
+    const LS_AUTO_DISMISS = 'dbee.sess.autoBannerDismissed';
+    let filterText = '';
+    let autoBannerDismissed = localStorage.getItem(LS_AUTO_DISMISS) === '1';
+    function loadSectionsCollapsed() {
+        try { return new Set(JSON.parse(localStorage.getItem(LS_SECTIONS) || '[]')); }
+        catch (e) { return new Set(); }
+    }
+    function saveSectionsCollapsed(set) {
+        try { localStorage.setItem(LS_SECTIONS, JSON.stringify([...set])); } catch (e) {}
+    }
+    function matchesFilter(...parts) {
+        if (!filterText) return true;
+        const needle = filterText.toLowerCase();
+        return parts.some(p => p && String(p).toLowerCase().includes(needle));
+    }
+    function connColorStyle(connId) {
+        const conn = state.connections.find(c => c.id === connId);
+        const color = conn?.properties?.color || '';
+        return color ? ` style="--row-color:${escapeHtml(color)}"` : '';
+    }
 
     function isActiveRightPanelTab() {
         if (!root) return false;
@@ -3480,6 +3502,11 @@ const SessionsTab = (() => {
             const color = conn.properties?.color || '';
             const colorStyle = color ? ` style="--row-color:${escapeHtml(color)}"` : '';
             const dbType = conn.databaseType || conn.dbType || '';
+            // Filter: match connection name/dbType OR any child tab name.
+            const kidsAll = state.editors.filter(t => t.connId === conn.id);
+            const connMatches = matchesFilter(conn.name, dbType);
+            const anyKidMatches = kidsAll.some(t => matchesFilter(t.name));
+            if (filterText && !connMatches && !anyKidMatches) return;
             const isCollapsed = collapsed.has(conn.id);
             const canExpand = count > 0;
             const arrow = canExpand
@@ -3504,13 +3531,18 @@ const SessionsTab = (() => {
                 </div>`);
 
             if (canExpand && !isCollapsed) {
-                const kids = state.editors.filter(t => t.connId === conn.id).map(renderTabChild).join('');
+                // When filter is active, only show kids that match (unless
+                // the parent itself matched, in which case show all).
+                const kidsRendered = (filterText && !connMatches)
+                    ? kidsAll.filter(t => matchesFilter(t.name))
+                    : kidsAll;
+                const kids = kidsRendered.map(renderTabChild).join('');
                 items.push(`<div class="sess-children" data-parent="${escapeHtml(conn.id)}">${kids}</div>`);
             }
         });
 
         // Tabs without any assigned connection, grouped at the bottom.
-        const unassigned = (state.editors || []).filter(t => !t.connId);
+        const unassigned = (state.editors || []).filter(t => !t.connId && matchesFilter(t.name));
         if (unassigned.length > 0) {
             const isCollapsed = collapsed.has('__unassigned__');
             const arrow = `<span class="sess-arrow${isCollapsed ? '' : ' expanded'}" data-action="toggle" data-id="__unassigned__" title="${isCollapsed ? 'Expand' : 'Collapse'}">▶</span>`;
@@ -3537,7 +3569,12 @@ const SessionsTab = (() => {
         if (!lastPoolStats.length) {
             return `<div class="sess-empty">No open pools. Press refresh after connecting.</div>`;
         }
-        return lastPoolStats.map(s => {
+        const filtered = lastPoolStats.filter(s => {
+            const conn = state.connections.find(c => c.id === s.connectionId);
+            return matchesFilter(conn ? conn.name : s.connectionId);
+        });
+        if (!filtered.length) return `<div class="sess-empty">No matches.</div>`;
+        return filtered.map(s => {
             const conn = state.connections.find(c => c.id === s.connectionId);
             const name = conn ? conn.name : s.connectionId;
             const color = conn?.properties?.color || '';
@@ -3624,10 +3661,14 @@ const SessionsTab = (() => {
         if (r.error) {
             return `<div class="sess-empty sess-empty-error">Query failed: ${escapeHtml(r.error)}</div>`;
         }
-        const list = r.sessions || [];
+        const list = (r.sessions || []).filter(s =>
+            matchesFilter(s.user, s.host, s.database, s.query, s.sessionId));
         if (!list.length) {
-            return `<div class="sess-empty">No other server sessions.</div>`;
+            return filterText
+                ? `<div class="sess-empty">No matches.</div>`
+                : `<div class="sess-empty">No other server sessions.</div>`;
         }
+        const colorStyle = connColorStyle(r.connId);
         return list.map(s => {
             const duration = (s.durationMs != null && s.durationMs > 0) ? formatElapsed(s.durationMs) : '';
             const userHost = [s.user, s.host].filter(Boolean).join('@');
@@ -3635,7 +3676,7 @@ const SessionsTab = (() => {
                 ? `<code class="sess-svr-sql">${escapeHtml(truncate(s.query, 160))}</code>`
                 : `<span class="sess-svr-sql sess-svr-sql-empty">(idle)</span>`;
             return `
-                <div class="sess-row sess-svr-row" data-pid="${escapeHtml(s.sessionId)}">
+                <div class="sess-row sess-svr-row"${colorStyle} data-pid="${escapeHtml(s.sessionId)}">
                     <div class="sess-svr-head">
                         <span class="sess-svr-pid">#${escapeHtml(s.sessionId)}</span>
                         <span class="sess-svr-user" title="${escapeHtml(userHost)}">${escapeHtml(userHost || '?')}</span>
@@ -3728,8 +3769,12 @@ const SessionsTab = (() => {
         const conn = e.connId ? state.connections.find(c => c.id === e.connId) : null;
         const tab = state.editors.find(t => t.id === e.tabId);
         const elapsed = formatElapsed(Date.now() - e.startedAt);
+        if (!matchesFilter(conn?.name, tab?.name, e.sql)) {
+            return `<div class="sess-empty">No matches.</div>`;
+        }
+        const colorStyle = connColorStyle(e.connId);
         return `
-            <div class="sess-row sess-running-row">
+            <div class="sess-row sess-running-row"${colorStyle}>
                 <span class="sess-dot sess-dot-running" title="running"></span>
                 <div class="sess-running-body">
                     <div class="sess-running-meta">
@@ -3743,32 +3788,64 @@ const SessionsTab = (() => {
             </div>`;
     }
 
+    function renderSection(id, title, bodyHtml, opts = {}) {
+        const collapsed = loadSectionsCollapsed().has(id);
+        const hint = opts.hint ? `<span class="sess-section-hint">${opts.hint}</span>` : '';
+        const controls = opts.controlsBodyId
+            ? `<span class="sess-section-controls" data-body="${opts.controlsBodyId}" data-stop="1">${opts.controlsHtml || ''}</span>`
+            : '';
+        const arrow = `<span class="sess-sec-arrow${collapsed ? '' : ' expanded'}">▶</span>`;
+        return `
+            <section class="sess-section${collapsed ? ' sess-section-collapsed' : ''}" data-section="${id}">
+                <div class="sess-section-title" data-action="toggle-section" data-section-id="${id}">
+                    <span class="sess-section-title-left">${arrow}<span>${title}</span>${hint}</span>
+                    ${controls}
+                </div>
+                <div class="sess-section-body" data-body="${id}"${collapsed ? ' hidden' : ''}>${bodyHtml}</div>
+            </section>`;
+    }
+
+    function renderUnifiedAutoBanner() {
+        if (autoBannerDismissed) return '';
+        const anyOn = poolAutoRefresh || svrAutoRefresh;
+        return `
+            <div class="sess-auto-banner">
+                <span class="sess-auto-label">Auto-refresh (Pool + Server, 5s):</span>
+                <button class="sess-btn-mini sess-toggle ${anyOn ? 'sess-toggle-on' : ''}" data-action="toggle-all-auto">
+                    ${anyOn ? 'on' : 'off'}
+                </button>
+                <button class="sess-auto-dismiss" data-action="dismiss-auto-banner" title="Hide banner">×</button>
+            </div>`;
+    }
+
+    function renderHeader() {
+        const q = escapeHtml(filterText);
+        const clear = filterText ? `<button class="sess-search-clear" data-action="clear-filter" title="Clear">×</button>` : '';
+        return `
+            <div class="sess-header">
+                <div class="sess-search">
+                    <input type="search" class="sess-search-input" placeholder="Filter by connection or SQL fragment…"
+                           value="${q}" data-field="filter" spellcheck="false" autocomplete="off" />
+                    ${clear}
+                </div>
+                ${renderUnifiedAutoBanner()}
+            </div>`;
+    }
+
     function render(el) {
         root = el;
         el.innerHTML = `
             <div class="sess-panel">
-                <section class="sess-section" data-section="active">
-                    <div class="sess-section-title">Connections</div>
-                    <div class="sess-section-body" data-body="active">${renderActiveConnections()}</div>
-                </section>
-                <section class="sess-section" data-section="pool">
-                    <div class="sess-section-title">
-                        <span>Pool Stats</span>
-                        <span class="sess-section-controls" data-body="pool-controls">${renderPoolControls()}</span>
-                    </div>
-                    <div class="sess-section-body" data-body="pool">${renderPoolStats()}</div>
-                </section>
-                <section class="sess-section" data-section="svr">
-                    <div class="sess-section-title">
-                        <span>Server Sessions <span class="sess-section-hint">(active tab · Top 10)</span></span>
-                        <span class="sess-section-controls" data-body="svr-controls">${renderServerControls()}</span>
-                    </div>
-                    <div class="sess-section-body" data-body="svr">${renderServerSessions()}</div>
-                </section>
-                <section class="sess-section" data-section="running">
-                    <div class="sess-section-title">Running Queries</div>
-                    <div class="sess-section-body" data-body="running">${renderRunning()}</div>
-                </section>
+                ${renderHeader()}
+                ${renderSection('active', 'Connections', renderActiveConnections())}
+                ${renderSection('pool', 'Pool Stats', renderPoolStats(), {
+                    controlsBodyId: 'pool-controls', controlsHtml: renderPoolControls()
+                })}
+                ${renderSection('svr', 'Server Sessions', renderServerSessions(), {
+                    hint: '(active tab · Top 10)',
+                    controlsBodyId: 'svr-controls', controlsHtml: renderServerControls()
+                })}
+                ${renderSection('running', 'Running Queries', renderRunning())}
             </div>`;
         bindDelegatedHandlers(el);
         startTickIfNeeded();
@@ -3780,7 +3857,56 @@ const SessionsTab = (() => {
     }
 
     function bindDelegatedHandlers(el) {
+        // Filter input — live filter, no debounce needed (local).
+        const input = el.querySelector('.sess-search-input');
+        if (input) {
+            input.addEventListener('input', (e) => {
+                filterText = e.target.value || '';
+                // Partial refresh without losing focus.
+                const a = root.querySelector('[data-body="active"]');
+                const p = root.querySelector('[data-body="pool"]');
+                const s = root.querySelector('[data-body="svr"]');
+                const r = root.querySelector('[data-body="running"]');
+                if (a) a.innerHTML = renderActiveConnections();
+                if (p) p.innerHTML = renderPoolStats();
+                if (s) s.innerHTML = renderServerSessions();
+                if (r) r.innerHTML = renderRunning();
+                // Toggle clear button without re-rendering the input itself.
+                const wrap = root.querySelector('.sess-search');
+                if (wrap) {
+                    const existing = wrap.querySelector('.sess-search-clear');
+                    if (filterText && !existing) {
+                        const btn = document.createElement('button');
+                        btn.className = 'sess-search-clear';
+                        btn.dataset.action = 'clear-filter';
+                        btn.title = 'Clear';
+                        btn.textContent = '×';
+                        wrap.appendChild(btn);
+                    } else if (!filterText && existing) {
+                        existing.remove();
+                    }
+                }
+            });
+            // Escape clears filter
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && filterText) {
+                    filterText = '';
+                    input.value = '';
+                    input.dispatchEvent(new Event('input'));
+                }
+            });
+        }
         el.onclick = async (ev) => {
+            // Section header toggle (ignore clicks on controls/arrow-row actions)
+            const secTitle = ev.target.closest('.sess-section-title[data-action="toggle-section"]');
+            if (secTitle && !ev.target.closest('[data-stop]') && !ev.target.closest('button[data-action]')) {
+                const id = secTitle.dataset.sectionId;
+                const set = loadSectionsCollapsed();
+                if (set.has(id)) set.delete(id); else set.add(id);
+                saveSectionsCollapsed(set);
+                refresh();
+                return;
+            }
             // Expand/collapse arrow (handled before button so arrow doesn't fall through)
             const arrow = ev.target.closest('.sess-arrow[data-action="toggle"]');
             if (arrow) {
@@ -3826,12 +3952,31 @@ const SessionsTab = (() => {
                 toggleServerAutoRefresh();
             } else if (action === 'svr-kill') {
                 killServerSession(id);
+            } else if (action === 'clear-filter') {
+                filterText = '';
+                const i = root.querySelector('.sess-search-input');
+                if (i) { i.value = ''; i.dispatchEvent(new Event('input')); i.focus(); }
+            } else if (action === 'toggle-all-auto') {
+                const anyOn = poolAutoRefresh || svrAutoRefresh;
+                const target = !anyOn;
+                if (poolAutoRefresh !== target) togglePoolAutoRefresh();
+                if (svrAutoRefresh !== target) toggleServerAutoRefresh();
+                // Re-render banner only (buttons inside show new state)
+                const b = root.querySelector('.sess-auto-banner');
+                if (b) b.outerHTML = renderUnifiedAutoBanner();
+            } else if (action === 'dismiss-auto-banner') {
+                autoBannerDismissed = true;
+                try { localStorage.setItem(LS_AUTO_DISMISS, '1'); } catch (e) {}
+                const b = root.querySelector('.sess-auto-banner');
+                if (b) b.remove();
             }
         };
     }
 
     function refresh() {
         if (!root) return;
+        // Header is self-contained — re-render only if filter is empty
+        // (so we don't destroy the input while user is typing).
         const a = root.querySelector('[data-body="active"]');
         const r = root.querySelector('[data-body="running"]');
         const p = root.querySelector('[data-body="pool"]');
@@ -3843,9 +3988,29 @@ const SessionsTab = (() => {
         // auto-poll on every trivial state change).
         if (p) p.innerHTML = renderPoolStats();
         if (s) s.innerHTML = renderServerSessions();
+        // Apply section-collapse state (hidden attr + arrow)
+        const collapsed = loadSectionsCollapsed();
+        root.querySelectorAll('.sess-section').forEach(sec => {
+            const id = sec.dataset.section;
+            const isCol = collapsed.has(id);
+            sec.classList.toggle('sess-section-collapsed', isCol);
+            const body = sec.querySelector('.sess-section-body');
+            if (body) body.toggleAttribute('hidden', isCol);
+            const ar = sec.querySelector('.sess-sec-arrow');
+            if (ar) ar.classList.toggle('expanded', !isCol);
+        });
         startTickIfNeeded();
         startPoolPollingIfNeeded();
         startServerPollingIfNeeded();
+    }
+
+    function openAndFocusSearch() {
+        // Ensure panel open + this tab active, then focus search input.
+        if (typeof RightPanel !== 'undefined') RightPanel.open('sessions');
+        setTimeout(() => {
+            const i = root && root.querySelector('.sess-search-input');
+            if (i) { i.focus(); i.select(); }
+        }, 50);
     }
 
     function startTickIfNeeded() {
@@ -3864,7 +4029,7 @@ const SessionsTab = (() => {
         if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
     }
 
-    return { render, refresh };
+    return { render, refresh, openAndFocusSearch };
 })();
 
 // Lifecycle helper — called from tab/connection/query mutation sites so the
@@ -4914,6 +5079,17 @@ function initEventHandlers() {
             return;
         }
 
+        // Ctrl/Cmd+Shift+S — open Sessions tab in right panel (#140 Phase D)
+        if (mod && e.shiftKey && (e.key === 'S' || e.key === 's')) {
+            e.preventDefault();
+            if (typeof SessionsTab !== 'undefined' && SessionsTab.openAndFocusSearch) {
+                SessionsTab.openAndFocusSearch();
+            } else if (typeof RightPanel !== 'undefined') {
+                RightPanel.open('sessions');
+            }
+            return;
+        }
+
         // Ctrl/Cmd+Shift+D — duplicate active tab (#127 Phase F)
         // Overrides the browser's default "Bookmark this tab" binding.
         if (mod && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
@@ -5383,6 +5559,7 @@ const CMD_PALETTE_COMMANDS = [
     { name: 'Query History', shortcut: 'Alt+H', action: showHistoryDialog },
     { name: 'AI Chat', shortcut: 'Ctrl+Shift+A', action: toggleAiChatPanel },
     { name: 'Toggle Right Panel', shortcut: 'Ctrl+Shift+R', action: () => { if (typeof RightPanel !== 'undefined') RightPanel.toggle(); } },
+    { name: 'Open Sessions Panel', shortcut: 'Ctrl+Shift+S', action: () => { if (typeof SessionsTab !== 'undefined' && SessionsTab.openAndFocusSearch) SessionsTab.openAndFocusSearch(); else if (typeof RightPanel !== 'undefined') RightPanel.open('sessions'); } },
     { name: 'AI Settings', action: showAiSettingsDialog },
     { name: 'AI: Explain SQL', action: aiExplainSql },
     { name: 'AI: Optimize SQL', action: aiOptimizeSql },
