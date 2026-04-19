@@ -1,7 +1,7 @@
 ---
 todo: 138
 title: Sessions 탭 Phase B — Pool Stats
-status: in_progress
+status: completed
 created: 2026-04-19
 branch: claude/editor-session-1
 ---
