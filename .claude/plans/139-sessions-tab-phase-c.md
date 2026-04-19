@@ -1,7 +1,7 @@
 ---
 todo: 139
 title: Sessions 탭 Phase C — Server Sessions + Kill (MVP Postgres/MySQL)
-status: in_progress
+status: completed
 created: 2026-04-19
 branch: claude/editor-session-1
 ---
