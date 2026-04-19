@@ -46,6 +46,10 @@ const api = {
         disconnect: (id) => api.request('POST', `/api/connections/${id}/disconnect`),
         poolStats: () => api.request('GET', '/api/connections/pool-stats'),
     },
+    apm: {
+        sessions: (connId, limit = 10) => api.request('GET', `/api/apm/${connId}/sessions?limit=${limit}`),
+        kill: (connId, sessionId) => api.request('POST', `/api/apm/${connId}/sessions/${encodeURIComponent(sessionId)}/kill`),
+    },
     query: {
         execute: (connectionId, sql, maxRows = 1000, executionId = null) =>
             api.request('POST', '/api/query/execute', { connectionId, sql, maxRows, executionId }),
@@ -3409,6 +3413,12 @@ const SessionsTab = (() => {
     let poolAutoRefresh = localStorage.getItem(LS_POOL_AUTO) === '1';
     let lastPoolStats = [];
     let poolLoading = false;
+    // Server Sessions (#139 Phase C)
+    let svrTimer = null;
+    const LS_SVR_AUTO = 'dbee.sess.svrAutoRefresh';
+    let svrAutoRefresh = localStorage.getItem(LS_SVR_AUTO) === '1';
+    let lastSvrResponse = null; // { supported, sessions, error, connId, connName }
+    let svrLoading = false;
 
     function isActiveRightPanelTab() {
         if (!root) return false;
@@ -3603,6 +3613,115 @@ const SessionsTab = (() => {
         `;
     }
 
+    function renderServerSessions() {
+        const r = lastSvrResponse;
+        if (!r) {
+            return `<div class="sess-empty">Select a tab with a connection, then press refresh.</div>`;
+        }
+        if (r.supported === false) {
+            return `<div class="sess-empty">Not supported on ${escapeHtml(r.dialect || 'this database')} yet — Postgres and MySQL only for now.</div>`;
+        }
+        if (r.error) {
+            return `<div class="sess-empty sess-empty-error">Query failed: ${escapeHtml(r.error)}</div>`;
+        }
+        const list = r.sessions || [];
+        if (!list.length) {
+            return `<div class="sess-empty">No other server sessions.</div>`;
+        }
+        return list.map(s => {
+            const duration = (s.durationMs != null && s.durationMs > 0) ? formatElapsed(s.durationMs) : '';
+            const userHost = [s.user, s.host].filter(Boolean).join('@');
+            const queryHtml = s.query
+                ? `<code class="sess-svr-sql">${escapeHtml(truncate(s.query, 160))}</code>`
+                : `<span class="sess-svr-sql sess-svr-sql-empty">(idle)</span>`;
+            return `
+                <div class="sess-row sess-svr-row" data-pid="${escapeHtml(s.sessionId)}">
+                    <div class="sess-svr-head">
+                        <span class="sess-svr-pid">#${escapeHtml(s.sessionId)}</span>
+                        <span class="sess-svr-user" title="${escapeHtml(userHost)}">${escapeHtml(userHost || '?')}</span>
+                        ${s.database ? `<span class="sess-svr-db">${escapeHtml(s.database)}</span>` : ''}
+                        ${s.state ? `<span class="sess-svr-state">${escapeHtml(s.state)}</span>` : ''}
+                        ${duration ? `<span class="sess-svr-duration">${duration}</span>` : ''}
+                        <button class="sess-btn-mini sess-btn-cancel" data-action="svr-kill" data-id="${escapeHtml(s.sessionId)}" title="Kill session">Kill</button>
+                    </div>
+                    ${queryHtml}
+                </div>`;
+        }).join('');
+    }
+
+    function renderServerControls() {
+        const cls = svrAutoRefresh ? 'sess-toggle-on' : '';
+        return `
+            <button class="sess-btn-mini" data-action="svr-refresh" title="Refresh now">↻</button>
+            <button class="sess-btn-mini sess-toggle ${cls}" data-action="svr-toggle-auto" title="Auto-refresh every 5s">
+                Auto ${svrAutoRefresh ? 'on' : 'off'}
+            </button>
+        `;
+    }
+
+    async function refreshServerSessions() {
+        const connId = getActiveConnectionId();
+        if (!connId) {
+            lastSvrResponse = { supported: true, sessions: [], note: 'no-conn' };
+            const el = root && root.querySelector('[data-body="svr"]');
+            if (el) el.innerHTML = `<div class="sess-empty">Active tab has no connection.</div>`;
+            return;
+        }
+        svrLoading = true;
+        try {
+            const data = await api.apm.sessions(connId, 10);
+            const conn = state.connections.find(c => c.id === connId);
+            lastSvrResponse = {
+                ...data,
+                connId,
+                connName: conn ? conn.name : null,
+                dialect: conn ? (conn.databaseType || conn.dbType) : null,
+            };
+        } catch (e) {
+            lastSvrResponse = { supported: true, sessions: [], error: e.message };
+        } finally {
+            svrLoading = false;
+            const el = root && root.querySelector('[data-body="svr"]');
+            if (el) el.innerHTML = renderServerSessions();
+        }
+    }
+
+    function startServerPollingIfNeeded() {
+        stopServerPolling();
+        if (!svrAutoRefresh) return;
+        if (!isActiveRightPanelTab()) return;
+        svrTimer = setInterval(() => refreshServerSessions(), 5000);
+    }
+    function stopServerPolling() {
+        if (svrTimer) { clearInterval(svrTimer); svrTimer = null; }
+    }
+    function toggleServerAutoRefresh() {
+        svrAutoRefresh = !svrAutoRefresh;
+        try { localStorage.setItem(LS_SVR_AUTO, svrAutoRefresh ? '1' : '0'); } catch (e) {}
+        const ctrl = root && root.querySelector('[data-body="svr-controls"]');
+        if (ctrl) ctrl.innerHTML = renderServerControls();
+        if (svrAutoRefresh) { refreshServerSessions(); startServerPollingIfNeeded(); }
+        else stopServerPolling();
+    }
+
+    async function killServerSession(sessionId) {
+        const connId = getActiveConnectionId();
+        if (!connId || !sessionId) return;
+        const ok = confirm(`Terminate server session #${sessionId}? This will cancel the running query and disconnect that user.`);
+        if (!ok) return;
+        try {
+            const r = await api.apm.kill(connId, sessionId);
+            if (r && r.success) {
+                showToast(r.message || 'Session terminated', 'info');
+                refreshServerSessions();
+            } else {
+                showToast((r && r.message) || 'Kill failed', 'error', 5000);
+            }
+        } catch (e) {
+            showToast('Kill failed: ' + e.message, 'error', 5000);
+        }
+    }
+
     function renderRunning() {
         const e = state.currentExecution;
         if (!e) return `<div class="sess-empty">No query running</div>`;
@@ -3639,6 +3758,13 @@ const SessionsTab = (() => {
                     </div>
                     <div class="sess-section-body" data-body="pool">${renderPoolStats()}</div>
                 </section>
+                <section class="sess-section" data-section="svr">
+                    <div class="sess-section-title">
+                        <span>Server Sessions <span class="sess-section-hint">(active tab · Top 10)</span></span>
+                        <span class="sess-section-controls" data-body="svr-controls">${renderServerControls()}</span>
+                    </div>
+                    <div class="sess-section-body" data-body="svr">${renderServerSessions()}</div>
+                </section>
                 <section class="sess-section" data-section="running">
                     <div class="sess-section-title">Running Queries</div>
                     <div class="sess-section-body" data-body="running">${renderRunning()}</div>
@@ -3649,6 +3775,8 @@ const SessionsTab = (() => {
         // Fetch once on mount so the user sees data without having to click refresh.
         refreshPoolStats();
         startPoolPollingIfNeeded();
+        refreshServerSessions();
+        startServerPollingIfNeeded();
     }
 
     function bindDelegatedHandlers(el) {
@@ -3692,6 +3820,12 @@ const SessionsTab = (() => {
                 refreshPoolStats();
             } else if (action === 'pool-toggle-auto') {
                 togglePoolAutoRefresh();
+            } else if (action === 'svr-refresh') {
+                refreshServerSessions();
+            } else if (action === 'svr-toggle-auto') {
+                toggleServerAutoRefresh();
+            } else if (action === 'svr-kill') {
+                killServerSession(id);
             }
         };
     }
@@ -3701,14 +3835,17 @@ const SessionsTab = (() => {
         const a = root.querySelector('[data-body="active"]');
         const r = root.querySelector('[data-body="running"]');
         const p = root.querySelector('[data-body="pool"]');
+        const s = root.querySelector('[data-body="svr"]');
         if (a) a.innerHTML = renderActiveConnections();
         if (r) r.innerHTML = renderRunning();
-        // Pool section re-renders from the last snapshot; fresh data comes
-        // from polling or the user's refresh button (no auto-poll on every
-        // trivial state change to avoid extra backend hits).
+        // Pool and Server sections re-render from the last snapshot; fresh
+        // data comes from polling or the user's refresh button (no
+        // auto-poll on every trivial state change).
         if (p) p.innerHTML = renderPoolStats();
+        if (s) s.innerHTML = renderServerSessions();
         startTickIfNeeded();
         startPoolPollingIfNeeded();
+        startServerPollingIfNeeded();
     }
 
     function startTickIfNeeded() {
