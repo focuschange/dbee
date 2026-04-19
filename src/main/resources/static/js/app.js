@@ -4,8 +4,22 @@
 
 const DEFAULT_PORTS = {
     MYSQL: 3306, POSTGRESQL: 5432, ORACLE: 1521,
-    SQLITE: 0, MSSQL: 1433, ATHENA: 443
+    SQLITE: 0, MSSQL: 1433, ATHENA: 443,
+    ELASTICSEARCH: 9200
 };
+
+function isEsConnection(connId) {
+    if (!connId || !state || !state.connections) return false;
+    const conn = state.connections.find(c => c.id === connId);
+    return conn && conn.databaseType === 'ELASTICSEARCH';
+}
+
+function buildSelectAll(connId, schema, table, limit = 100) {
+    if (isEsConnection(connId)) {
+        return `SELECT * FROM ${table} LIMIT ${limit};`;
+    }
+    return `SELECT * FROM ${schema ? schema + '.' : ''}${table} LIMIT ${limit};`;
+}
 
 // ============================================================
 // API Client
@@ -30,6 +44,11 @@ const api = {
         test: (info) => api.request('POST', '/api/connections/test', info),
         connect: (id) => api.request('POST', `/api/connections/${id}/connect`),
         disconnect: (id) => api.request('POST', `/api/connections/${id}/disconnect`),
+        poolStats: () => api.request('GET', '/api/connections/pool-stats'),
+    },
+    apm: {
+        sessions: (connId, limit = 10) => api.request('GET', `/api/apm/${connId}/sessions?limit=${limit}`),
+        kill: (connId, sessionId) => api.request('POST', `/api/apm/${connId}/sessions/${encodeURIComponent(sessionId)}/kill`),
     },
     query: {
         execute: (connectionId, sql, maxRows = 1000, executionId = null) =>
@@ -128,7 +147,14 @@ const api = {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ connectionId, sql, maxRows: 50000 })
             });
-            if (!res.ok) throw new Error('Export failed');
+            if (!res.ok) {
+                let detail = res.statusText;
+                try {
+                    const body = await res.text();
+                    if (body) detail = body.slice(0, 200);
+                } catch (e) {}
+                throw new Error(`HTTP ${res.status}: ${detail}`);
+            }
             const blob = await res.blob();
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
@@ -159,7 +185,7 @@ const state = {
     editingTunnelId: null,
     notes: [],
     activeNoteId: null,
-    autocompleteCache: null, // { connectionId, schemas: [{ name, tables: [{ name, type, columns: [{ name, typeName }] }] }] }
+    autocompleteCache: new Map(), // Map<connId, { schemas: [...], _ts }>  — per-tab isolation (#126 Phase D)
     resultData: null, // { columnNames, columnTypes, rows (original), executionTimeMs }
     sortState: { columnIndex: -1, direction: null }, // direction: 'asc' | 'desc' | null
     filterKeyword: '', // result filter keyword
@@ -168,6 +194,160 @@ const state = {
 let monacoEditor = null;
 let toastuiEditor = null;
 let editorCounter = 0;
+
+// ============================================================
+// Active tab / connection helpers (#123 Phase A)
+// Each editor tab owns its own connection (tab.connId). These helpers
+// provide a single read/write surface so callers no longer touch the
+// legacy `state.activeConnectionId` global.
+// ============================================================
+function getActiveTab() {
+    return state.editors.find(e => e.id === state.activeEditorId) || null;
+}
+
+function getActiveConnectionId() {
+    const t = getActiveTab();
+    return t && t.connId ? t.connId : null;
+}
+
+function setActiveTabConnection(connId, connName) {
+    const t = getActiveTab();
+    if (!t) return;
+    t.connId = connId || null;
+    t.connName = connName || null;
+    // Keep the legacy global in sync so code paths that still read it
+    // (e.g. Phase A intermediate state) behave identically.
+    state.activeConnectionId = t.connId;
+    try { saveEditorSession(); } catch (e) {}
+    try { renderTabs(); } catch (e) {}
+    try { refreshConnectionIndicators(t); } catch (e) {}
+    try { refreshTreeConnectionBadges(); } catch (e) {}
+    try { refreshSessionsTabIfVisible(); } catch (e) {}
+}
+
+// ============================================================
+// Per-tab result panel snapshot (#128 Phase E)
+// Each SQL tab keeps its last query output (DOM + state) so switching
+// tabs restores the matching result view instead of wiping it.
+// ============================================================
+let _emptyResultPanelHtml = null; // initialized on first capture
+
+function _getResultRoots() {
+    return {
+        content: document.getElementById('result-content'),
+        filterWrap: document.getElementById('result-filter-wrap'),
+        filterInput: document.getElementById('result-filter-input'),
+        headerLabel: document.querySelector('#result-header > span:first-of-type'),
+    };
+}
+
+function _initEmptyResultPanelHtmlOnce() {
+    if (_emptyResultPanelHtml !== null) return;
+    const { content } = _getResultRoots();
+    _emptyResultPanelHtml = content ? content.innerHTML : '';
+}
+
+function captureResultPanelToTab(tab) {
+    if (!tab || tab.type !== 'sql') return;
+    const { content, filterWrap, filterInput, headerLabel } = _getResultRoots();
+    if (!content) return;
+
+    // Move the DOM children into a DocumentFragment to preserve event handlers.
+    const fragment = document.createDocumentFragment();
+    while (content.firstChild) fragment.appendChild(content.firstChild);
+
+    tab.resultState = {
+        domFragment: fragment,
+        filterWrapVisible: filterWrap ? filterWrap.style.display !== 'none' : false,
+        filterInputValue: filterInput ? filterInput.value : '',
+        headerLabel: headerLabel ? headerLabel.textContent : 'Results',
+        resultData: state.resultData || null,
+        sortState: state.sortState ? { ...state.sortState } : null,
+        filterKeyword: state.filterKeyword || '',
+        lastResult: state.lastResult ? { ...state.lastResult } : null,
+        lastError: state.lastError ? { ...state.lastError } : null,
+        primaryKeyCache: state.primaryKeyCache ? [...state.primaryKeyCache] : null,
+    };
+}
+
+function restoreResultPanelFromTab(tab) {
+    _initEmptyResultPanelHtmlOnce();
+    const { content, filterWrap, filterInput, headerLabel } = _getResultRoots();
+    if (!content) return;
+
+    // Clear whatever is currently in the panel (it belongs to the outgoing tab).
+    content.innerHTML = '';
+
+    if (tab && tab.type === 'sql' && tab.resultState) {
+        const s = tab.resultState;
+        content.appendChild(s.domFragment);
+        if (filterWrap) filterWrap.style.display = s.filterWrapVisible ? '' : 'none';
+        if (filterInput) filterInput.value = s.filterInputValue || '';
+        if (headerLabel) headerLabel.textContent = s.headerLabel || 'Results';
+
+        // Restore the mutable state so sort/filter/cell-edit operate on the right data.
+        state.resultData = s.resultData;
+        state.sortState = s.sortState || { columnIndex: -1, direction: null };
+        state.filterKeyword = s.filterKeyword || '';
+        state.lastResult = s.lastResult;
+        state.lastError = s.lastError;
+        state.primaryKeyCache = s.primaryKeyCache;
+    } else {
+        // Fresh / ERD / never-executed tab — show the initial placeholder.
+        content.innerHTML = _emptyResultPanelHtml;
+        if (filterWrap) filterWrap.style.display = 'none';
+        if (filterInput) filterInput.value = '';
+        if (headerLabel) headerLabel.textContent = 'Results';
+        state.resultData = null;
+        state.sortState = { columnIndex: -1, direction: null };
+        state.filterKeyword = '';
+        state.lastResult = null;
+        state.lastError = null;
+        state.primaryKeyCache = null;
+    }
+}
+
+// Clear any tab (SQL or ERD) still referencing a connection that went away.
+function detachConnectionFromTabs(connId) {
+    if (!connId) return;
+    for (const t of state.editors) {
+        if (t.connId === connId) {
+            t.connId = null;
+            t.connName = null;
+        }
+    }
+    if (state.activeConnectionId === connId) state.activeConnectionId = null;
+    try { saveEditorSession(); } catch (e) {}
+    try { refreshTreeConnectionBadges(); } catch (e) {}
+    try { refreshSessionsTabIfVisible(); } catch (e) {}
+}
+
+// Refresh the tab-usage badge + active highlight on every connection tree node.
+// Called after any change to tab.connId, tab lifecycle, or active tab switch.
+// (#125 Phase C) — does a partial DOM update, not a full tree re-render.
+function refreshTreeConnectionBadges() {
+    const activeConnId = getActiveConnectionId();
+    const counts = new Map();
+    for (const t of (state.editors || [])) {
+        if (t.connId) counts.set(t.connId, (counts.get(t.connId) || 0) + 1);
+    }
+    document.querySelectorAll('.tree-node[data-type="connection"]').forEach(node => {
+        const cid = node.dataset.connId;
+        const count = counts.get(cid) || 0;
+        const badge = node.querySelector('.conn-tab-usage-badge');
+        if (badge) {
+            if (count >= 2) {
+                badge.textContent = `×${count}`;
+                badge.style.display = '';
+                badge.title = `${count} tab(s) use this connection`;
+            } else {
+                badge.textContent = '';
+                badge.style.display = 'none';
+            }
+        }
+        node.classList.toggle('tree-conn-active', !!activeConnId && cid === activeConnId);
+    });
+}
 
 // ============================================================
 // Monaco Editor
@@ -187,9 +367,14 @@ function initMonaco() {
             padding: { top: 8 },
         });
 
-        // Ctrl+Enter to execute
+        // Ctrl+Enter: run current statement (cursor) or selection
         monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
-            executeQuery();
+            executeQuery(false);
+        });
+
+        // Ctrl+Shift+Enter: run entire editor
+        monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter, () => {
+            executeQuery(true);
         });
 
         // Ctrl+E to EXPLAIN
@@ -205,6 +390,21 @@ function initMonaco() {
         // Ctrl+Shift+A to toggle AI Chat
         monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyA, () => {
             toggleAiChatPanel();
+        });
+
+        // Ctrl+Shift+R to toggle Right Panel
+        monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyR, () => {
+            if (typeof RightPanel !== 'undefined') RightPanel.toggle();
+        });
+
+        // Ctrl+Shift+K — open the active tab's connection dropdown (#124)
+        monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyK, () => {
+            openActiveTabConnectionMenu();
+        });
+
+        // Ctrl+Shift+D — duplicate the active tab (#127 Phase F)
+        monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyD, () => {
+            duplicateActiveTab();
         });
 
         // Add AI context menu actions
@@ -252,22 +452,30 @@ const SQL_KEYWORDS = [
 const SCHEMA_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 async function loadAutoCompleteCache(connectionId) {
-    // Return cached if still valid
-    if (state.autocompleteCache && state.autocompleteCache.connectionId === connectionId
-        && state.autocompleteCache._ts && Date.now() - state.autocompleteCache._ts < SCHEMA_CACHE_TTL) {
+    if (!connectionId) return;
+    const existing = state.autocompleteCache.get(connectionId);
+    if (existing && existing._ts && Date.now() - existing._ts < SCHEMA_CACHE_TTL) {
         return;
     }
     try {
         const data = await api.metadata.autocomplete(connectionId);
-        state.autocompleteCache = { connectionId, ...data, _ts: Date.now() };
+        state.autocompleteCache.set(connectionId, { ...data, _ts: Date.now() });
     } catch (e) {
         console.warn('Failed to load autocomplete metadata:', e);
-        state.autocompleteCache = null;
+        state.autocompleteCache.delete(connectionId);
     }
 }
 
-function clearAutoCompleteCache() {
-    state.autocompleteCache = null;
+// Fetch the cache entry for a given connection; returns null if missing.
+function getAutocompleteCache(connectionId) {
+    if (!connectionId) return null;
+    return state.autocompleteCache.get(connectionId) || null;
+}
+
+// When called with a connId, clear only that entry; otherwise clear all.
+function clearAutoCompleteCache(connectionId) {
+    if (connectionId) state.autocompleteCache.delete(connectionId);
+    else state.autocompleteCache.clear();
 }
 
 function registerSqlCompletionProvider() {
@@ -302,74 +510,102 @@ function registerSqlCompletionProvider() {
                     endLineNumber: position.lineNumber,
                     endColumn: position.column,
                 };
-                return { suggestions: getDotCompletions(prefix, dotRange, textUntilPosition) };
+                // Pass the whole statement so aliases declared AFTER the cursor
+                // (e.g. `SELECT a.| FROM foo a`) are still resolvable.
+                return { suggestions: getDotCompletions(prefix, dotRange, model.getValue()) };
             }
 
             const suggestions = [];
+            const activeCache = getAutocompleteCache(getActiveConnectionId());
+            const context = parseSqlContext(textUntilPosition);
+            // Narrow the suggestion set based on cursor position:
+            //   • FROM/JOIN/UPDATE/INTO/TABLE  → schemas + tables/views only
+            //   • SELECT/WHERE/AND/ON/SET/…   → columns + keywords (functions) + snippets
+            //   • otherwise                   → everything (keyword-heavy fallback)
+            const mode = context.expectsTable ? 'table'
+                       : context.expectsColumn ? 'column'
+                       : 'any';
 
-            // SQL keywords
-            SQL_KEYWORDS.forEach(kw => {
-                suggestions.push({
-                    label: kw,
-                    kind: monaco.languages.CompletionItemKind.Keyword,
-                    insertText: kw,
-                    range: range,
-                    sortText: '3_' + kw,
-                });
-            });
-
-            // Schema-aware suggestions
-            if (state.autocompleteCache) {
-                const context = parseSqlContext(textUntilPosition);
-                const cache = state.autocompleteCache;
-
-                // Schema names
-                cache.schemas.forEach(schema => {
+            // SQL keywords (skip when we're clearly expecting a table identifier)
+            if (mode !== 'table') {
+                SQL_KEYWORDS.forEach(kw => {
                     suggestions.push({
-                        label: schema.name,
-                        kind: monaco.languages.CompletionItemKind.Module,
-                        insertText: schema.name,
-                        detail: 'Schema',
+                        label: kw,
+                        kind: monaco.languages.CompletionItemKind.Keyword,
+                        insertText: kw,
                         range: range,
-                        sortText: '2_' + schema.name,
+                        sortText: '3_' + kw,
                     });
                 });
+            }
 
-                // Table/view names from all schemas
-                cache.schemas.forEach(schema => {
-                    schema.tables.forEach(table => {
-                        const isView = table.type === 'VIEW';
+            // Schema-aware suggestions (per-tab cache — #126 Phase D)
+            if (activeCache) {
+                const cache = activeCache;
+
+                if (mode !== 'column') {
+                    // Schema names
+                    cache.schemas.forEach(schema => {
                         suggestions.push({
-                            label: table.name,
-                            kind: isView ? monaco.languages.CompletionItemKind.Interface : monaco.languages.CompletionItemKind.Struct,
-                            insertText: table.name,
-                            detail: `${isView ? 'View' : 'Table'} (${schema.name})`,
+                            label: schema.name,
+                            kind: monaco.languages.CompletionItemKind.Module,
+                            insertText: schema.name,
+                            detail: 'Schema',
                             range: range,
-                            sortText: context.expectsTable ? '0_' + table.name : '1_' + table.name,
+                            sortText: '2_' + schema.name,
                         });
                     });
-                });
-
-                // Column names — prioritize if context expects columns, or always include for convenience
-                const contextTables = getTablesFromContext(textUntilPosition, cache);
-                if (contextTables.length > 0) {
-                    contextTables.forEach(({ table, alias, schema }) => {
-                        table.columns.forEach(col => {
+                    // Table/view names from all schemas
+                    cache.schemas.forEach(schema => {
+                        schema.tables.forEach(table => {
+                            const isView = table.type === 'VIEW';
                             suggestions.push({
-                                label: col.name,
-                                kind: monaco.languages.CompletionItemKind.Field,
-                                insertText: col.name,
-                                detail: `${col.typeName} — ${alias || table.name}`,
+                                label: table.name,
+                                kind: isView ? monaco.languages.CompletionItemKind.Interface : monaco.languages.CompletionItemKind.Struct,
+                                insertText: table.name,
+                                detail: `${isView ? 'View' : 'Table'} (${schema.name})`,
                                 range: range,
-                                sortText: context.expectsColumn ? '0_' + col.name : '1_' + col.name,
+                                sortText: mode === 'table' ? '0_' + table.name : '1_' + table.name,
                             });
                         });
                     });
                 }
+
+                if (mode !== 'table') {
+                    // Resolve referenced tables from the whole statement so aliases
+                    // declared in a later FROM/JOIN clause are recognized too.
+                    const contextTables = getTablesFromContext(model.getValue(), cache);
+                    if (contextTables.length > 0) {
+                        contextTables.forEach(({ table, alias, schema }) => {
+                            // Offer the alias itself as a completion (e.g. `a`) so
+                            // users can type `a` then `.` to trigger dot completion.
+                            if (alias && alias !== table.name) {
+                                suggestions.push({
+                                    label: alias,
+                                    kind: monaco.languages.CompletionItemKind.Variable,
+                                    insertText: alias,
+                                    detail: `Alias for ${schema}.${table.name}`,
+                                    range: range,
+                                    sortText: '0_' + alias,
+                                });
+                            }
+                            table.columns.forEach(col => {
+                                suggestions.push({
+                                    label: col.name,
+                                    kind: monaco.languages.CompletionItemKind.Field,
+                                    insertText: col.name,
+                                    detail: `${col.typeName} — ${alias || table.name}`,
+                                    range: range,
+                                    sortText: mode === 'column' ? '0_' + col.name : '1_' + col.name,
+                                });
+                            });
+                        });
+                    }
+                }
             }
 
-            // Snippet suggestions
-            if (state.snippetsCache) {
+            // Snippet suggestions (skip in table-only contexts)
+            if (mode !== 'table' && state.snippetsCache) {
                 state.snippetsCache.forEach(s => {
                     suggestions.push({
                         label: s.prefix,
@@ -398,8 +634,8 @@ async function loadSnippetsCache() {
 }
 
 function getDotCompletions(prefix, range, fullText) {
-    if (!state.autocompleteCache) return [];
-    const cache = state.autocompleteCache;
+    const cache = getAutocompleteCache(getActiveConnectionId());
+    if (!cache) return [];
     const suggestions = [];
 
     // Check if prefix is a schema name → suggest tables
@@ -517,7 +753,13 @@ function addEditorTab() {
     editorCounter++;
     const id = 'tab-' + editorCounter;
     const model = monaco.editor.createModel('', 'sql');
-    const tab = { id, type: 'sql', name: 'Query ' + editorCounter, model, savedContent: '' };
+    // New SQL tabs inherit the connection from the currently active tab
+    // so the user can keep querying the same DB without re-selecting.
+    const prev = getActiveTab();
+    const inheritedConnId = prev && prev.connId ? prev.connId : (state.activeConnectionId || null);
+    const inheritedConnName = prev && prev.connName ? prev.connName : null;
+    const tab = { id, type: 'sql', name: 'Query ' + editorCounter, model, savedContent: '',
+                  connId: inheritedConnId, connName: inheritedConnName };
     // Track dirty state
     model.onDidChangeContent(() => {
         tab.dirty = model.getValue() !== tab.savedContent;
@@ -526,6 +768,47 @@ function addEditorTab() {
     state.editors.push(tab);
     renderTabs();
     switchTab(id);
+    try { refreshTreeConnectionBadges(); } catch (e) {}
+    try { refreshSessionsTabIfVisible(); } catch (e) {}
+}
+
+// #127 Phase F — duplicate the active SQL tab (content + connection).
+// ERD tabs are pinned to a specific conn+schema, so we skip duplicating them.
+function duplicateActiveTab() {
+    const src = getActiveTab();
+    if (!src) return;
+    if (src.type !== 'sql') {
+        const msg = 'Only SQL tabs can be duplicated';
+        updateStatus(msg, true);
+        showToast(msg, 'error');
+        return;
+    }
+    editorCounter++;
+    const id = 'tab-' + editorCounter;
+    const sourceSql = src.model ? src.model.getValue() : '';
+    const model = monaco.editor.createModel(sourceSql, 'sql');
+    const tab = {
+        id,
+        type: 'sql',
+        name: (src.name || 'Query') + ' (copy)',
+        model,
+        savedContent: sourceSql,
+        connId: src.connId || null,
+        connName: src.connName || null,
+    };
+    model.onDidChangeContent(() => {
+        tab.dirty = model.getValue() !== tab.savedContent;
+        renderTabs();
+    });
+    // Insert the clone immediately after the source tab instead of at the end.
+    const srcIdx = state.editors.findIndex(t => t.id === src.id);
+    if (srcIdx >= 0) state.editors.splice(srcIdx + 1, 0, tab);
+    else state.editors.push(tab);
+    renderTabs();
+    switchTab(id);
+    try { refreshTreeConnectionBadges(); } catch (e) {}
+    try { refreshSessionsTabIfVisible(); } catch (e) {}
+    updateStatus(`Duplicated tab: ${tab.name}`);
 }
 
 /**
@@ -560,7 +843,8 @@ function saveEditorSession() {
                          connId: t.connId, connName: t.connName, schema: t.schema };
             }
             return { id: t.id, type: 'sql', name: t.name,
-                     content: t.model ? t.model.getValue() : '' };
+                     content: t.model ? t.model.getValue() : '',
+                     connId: t.connId || null, connName: t.connName || null };
         });
         localStorage.setItem('dbee-editor-session', JSON.stringify({
             tabs: session, activeId: state.activeEditorId, counter: editorCounter
@@ -582,7 +866,8 @@ function restoreEditorSession() {
                 state.editors.push(tab);
             } else {
                 const model = monaco.editor.createModel(t.content || '', 'sql');
-                const tab = { id: t.id, type: 'sql', name: t.name, model, savedContent: t.content || '' };
+                const tab = { id: t.id, type: 'sql', name: t.name, model, savedContent: t.content || '',
+                              connId: t.connId || null, connName: t.connName || null };
                 model.onDidChangeContent(() => {
                     tab.dirty = model.getValue() !== tab.savedContent;
                     renderTabs();
@@ -599,9 +884,23 @@ function restoreEditorSession() {
 function switchTab(id) {
     const prevTabId = state.activeEditorId;
     const prevTab = state.editors.find(e => e.id === prevTabId);
+
+    // Phase E: snapshot the outgoing tab's result panel before we leave it,
+    // so it can be restored when the user comes back.
+    if (prevTab && prevTab.id !== id) {
+        try { captureResultPanelToTab(prevTab); } catch (e) {}
+    }
+
     state.activeEditorId = id;
     const tab = state.editors.find(e => e.id === id);
     if (!tab) { renderTabs(); return; }
+
+    try { restoreResultPanelFromTab(tab); } catch (e) {}
+
+    // Phase A: mirror the new tab's connection into the legacy global so
+    // visual cues (tree highlight, status bar) remain consistent until
+    // Phase B's UI changes land.
+    state.activeConnectionId = tab.connId || null;
 
     const editorContainer = document.getElementById('editor-container');
     const erdView = document.getElementById('erd-view');
@@ -622,6 +921,37 @@ function switchTab(id) {
         if (monacoEditor && tab.model) monacoEditor.setModel(tab.model);
     }
     renderTabs();
+    refreshConnectionIndicators(tab);
+    try { refreshTreeConnectionBadges(); } catch (e) {}
+    try { refreshSessionsTabIfVisible(); } catch (e) {}
+
+    // Warm the per-tab autocomplete cache so suggestions in this tab reflect
+    // this tab's connection, not whoever was last loaded. Non-blocking.
+    if (tab.connId) {
+        loadAutoCompleteCache(tab.connId).catch(() => {});
+    }
+}
+
+// Sync the status bar + toolbar connection badge with the tab's own connection.
+// Called on tab switch so the UI reflects per-tab state instead of the legacy global.
+function refreshConnectionIndicators(tab) {
+    const conn = tab && tab.connId
+        ? state.connections.find(c => c.id === tab.connId)
+        : null;
+    const name = conn ? conn.name : (tab && tab.connName) || '';
+    if (name) {
+        updateStatus(`Connected: ${name}`);
+    } else {
+        const connEl = document.getElementById('status-connection');
+        const dot = document.getElementById('status-dot');
+        const badge = document.getElementById('toolbar-conn-badge');
+        const badgeDot = badge ? badge.querySelector('.badge-dot') : null;
+        const badgeText = badge ? badge.querySelector('.badge-text') : null;
+        if (connEl) connEl.textContent = 'Not connected';
+        if (dot) dot.className = 'status-indicator';
+        if (badgeDot) badgeDot.classList.remove('connected');
+        if (badgeText) badgeText.textContent = 'No connection';
+    }
 }
 
 function closeTab(id) {
@@ -644,6 +974,8 @@ function closeTab(id) {
         switchTab(state.editors[newIdx].id);
     }
     renderTabs();
+    try { refreshTreeConnectionBadges(); } catch (e) {}
+    try { refreshSessionsTabIfVisible(); } catch (e) {}
 }
 
 function renderTabs() {
@@ -654,11 +986,20 @@ function renderTabs() {
         const typeClass = tab.type === 'erd' ? ' tab-erd' : '';
         div.className = 'tab' + (tab.id === state.activeEditorId ? ' active' : '') + (tab.dirty ? ' dirty' : '') + typeClass;
         const dirtyDot = tab.dirty ? '<span class="tab-dirty-dot">●</span>' : '';
+
+        // Connection chip — shows which DB this tab talks to (#124 Phase B)
+        const chipHtml = renderTabConnectionChip(tab);
+
         div.innerHTML = `
+            ${chipHtml}
             <span class="tab-label">${escapeHtml(tab.name)}${dirtyDot}</span>
             ${state.editors.length > 1 ? '<span class="tab-close">&times;</span>' : ''}
         `;
-        div.querySelector('.tab-label').onclick = () => switchTab(tab.id);
+        div.querySelector('.tab-label').onclick = () => {
+            // Only switch if needed — skipping renderTabs() preserves DOM identity
+            // so the browser's dblclick-for-rename can fire.
+            if (tab.id !== state.activeEditorId) switchTab(tab.id);
+        };
         // Double-click to rename tab
         div.querySelector('.tab-label').ondblclick = (e) => {
             e.stopPropagation();
@@ -676,10 +1017,310 @@ function renderTabs() {
             input.onblur = finish;
             input.onkeydown = (ke) => { if (ke.key === 'Enter') input.blur(); if (ke.key === 'Escape') { input.value = tab.name; input.blur(); } };
         };
+        const chipEl = div.querySelector('.tab-conn-chip');
+        if (chipEl) {
+            chipEl.onclick = (e) => {
+                e.stopPropagation();
+                const wasActive = tab.id === state.activeEditorId;
+                if (!wasActive) switchTab(tab.id); // renderTabs() runs → old chipEl becomes detached
+                // Re-query the chip anchor from the freshly rendered tab list
+                openActiveTabConnectionMenu();
+            };
+            attachTabChipTooltip(chipEl);
+        }
         const closeBtn = div.querySelector('.tab-close');
         if (closeBtn) closeBtn.onclick = (e) => { e.stopPropagation(); closeTab(tab.id); };
+
+        // Drag-to-reorder
+        div.draggable = true;
+        div.addEventListener('dragstart', (e) => {
+            e.dataTransfer.setData('text/plain', tab.id);
+            e.dataTransfer.effectAllowed = 'move';
+            div.classList.add('dragging');
+        });
+        div.addEventListener('dragend', () => {
+            div.classList.remove('dragging');
+            document.querySelectorAll('.tab.drop-before, .tab.drop-after')
+                .forEach(el => el.classList.remove('drop-before', 'drop-after'));
+        });
+        div.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            const rect = div.getBoundingClientRect();
+            const before = e.clientX < rect.left + rect.width / 2;
+            div.classList.toggle('drop-before', before);
+            div.classList.toggle('drop-after', !before);
+        });
+        div.addEventListener('dragleave', () => {
+            div.classList.remove('drop-before', 'drop-after');
+        });
+        div.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const draggedId = e.dataTransfer.getData('text/plain');
+            div.classList.remove('drop-before', 'drop-after');
+            if (!draggedId || draggedId === tab.id) return;
+            const rect = div.getBoundingClientRect();
+            const before = e.clientX < rect.left + rect.width / 2;
+            reorderEditorTab(draggedId, tab.id, before);
+        });
+
         tabList.appendChild(div);
     });
+}
+
+function reorderEditorTab(dragId, targetId, placeBefore) {
+    const arr = state.editors;
+    const dragIdx = arr.findIndex(t => t.id === dragId);
+    if (dragIdx < 0) return;
+    const [item] = arr.splice(dragIdx, 1);
+    const targetIdx = arr.findIndex(t => t.id === targetId);
+    if (targetIdx < 0) { arr.splice(dragIdx, 0, item); return; } // safety
+    const insertAt = placeBefore ? targetIdx : targetIdx + 1;
+    arr.splice(insertAt, 0, item);
+    renderTabs();
+    try { saveEditorSession(); } catch (e) {}
+}
+
+function renderTabConnectionChip(tab) {
+    const conn = tab.connId ? state.connections.find(c => c.id === tab.connId) : null;
+    const name = conn ? conn.name : (tab.connName || null);
+    const color = conn?.properties?.color || '';
+    const readonly = tab.type === 'erd';
+    const connected = !!(conn && state.autocompleteCache.has(conn.id));
+    const cls = 'tab-conn-chip' + (name ? ' has-conn' : ' no-conn') + (readonly ? ' readonly' : '');
+    const style = color ? ` style="--chip-color:${escapeHtml(color)}"` : '';
+
+    // Tooltip: detailed info shown on hover (user explicitly wants the chip itself icon-only).
+    const lines = [];
+    lines.push(`Connection: ${name || '(none)'}`);
+    if (conn) {
+        if (conn.dbType) lines.push(`Type: ${conn.dbType}`);
+        lines.push(`Status: ${connected ? 'connected' : 'not connected'}`);
+    }
+    lines.push(readonly
+        ? '(locked for ERD tabs)'
+        : 'Click to change · Cmd/Ctrl+Shift+K');
+    const title = lines.join('\n');
+
+    return `<span class="${cls}"${style} data-tooltip="${escapeHtml(title)}"><span class="chip-dot"></span></span>`;
+}
+
+// Custom tooltip for the tab connection chip — the browser's built-in
+// `title` tooltip has no position control and gets clipped near the top edge.
+function attachTabChipTooltip(chipEl) {
+    const show = () => {
+        hideTabChipTooltip();
+        const text = chipEl.getAttribute('data-tooltip');
+        if (!text) return;
+        const tip = document.createElement('div');
+        tip.className = 'tab-chip-tooltip';
+        tip.id = 'tab-chip-tooltip';
+        tip.textContent = text;
+        document.body.appendChild(tip);
+
+        const rect = chipEl.getBoundingClientRect();
+        const tipRect = tip.getBoundingClientRect();
+        const gap = 6;
+        // Default below the chip; flip above if it would overflow the viewport.
+        let top = rect.bottom + gap;
+        if (top + tipRect.height > window.innerHeight - 4) top = rect.top - tipRect.height - gap;
+        let left = rect.left + (rect.width / 2) - (tipRect.width / 2);
+        if (left < 4) left = 4;
+        if (left + tipRect.width > window.innerWidth - 4) left = window.innerWidth - tipRect.width - 4;
+        tip.style.top = `${Math.max(4, top)}px`;
+        tip.style.left = `${left}px`;
+    };
+    chipEl.addEventListener('mouseenter', show);
+    chipEl.addEventListener('mouseleave', hideTabChipTooltip);
+    chipEl.addEventListener('mousedown', hideTabChipTooltip);
+}
+
+function hideTabChipTooltip() {
+    const t = document.getElementById('tab-chip-tooltip');
+    if (t) t.remove();
+}
+
+// ============================================================
+// Tab connection dropdown (#124 Phase B)
+// ============================================================
+function showTabConnectionMenu(tabId, anchorEl) {
+    const tab = state.editors.find(t => t.id === tabId);
+    if (!tab) return;
+    if (tab.type === 'erd') return; // ERD tabs are readonly
+
+    hideTabConnectionMenu();
+
+    const menu = document.createElement('div');
+    menu.className = 'tab-conn-menu';
+    menu.id = 'tab-conn-menu';
+
+    const search = document.createElement('input');
+    search.type = 'text';
+    search.className = 'tab-conn-menu-search';
+    search.placeholder = 'Search connection…';
+    menu.appendChild(search);
+
+    const list = document.createElement('div');
+    list.className = 'tab-conn-menu-list';
+    menu.appendChild(list);
+
+    const setActive = (idx) => {
+        const items = list.querySelectorAll('.tab-conn-menu-item');
+        items.forEach((el, i) => el.classList.toggle('active', i === idx));
+        if (items[idx]) items[idx].scrollIntoView({ block: 'nearest' });
+    };
+
+    const currentActiveIdx = () => {
+        const items = list.querySelectorAll('.tab-conn-menu-item');
+        for (let i = 0; i < items.length; i++) if (items[i].classList.contains('active')) return i;
+        return -1;
+    };
+
+    const renderList = (filter) => {
+        list.innerHTML = '';
+        const q = (filter || '').trim().toLowerCase();
+
+        // (None) option — clears the tab's connection
+        const none = document.createElement('div');
+        none.className = 'tab-conn-menu-item' + (!tab.connId ? ' selected' : '');
+        none.innerHTML = `<span class="chip-dot none"></span><span class="menu-item-text">(None)</span>`;
+        none.onclick = () => { pickConnectionForActiveTab(null); hideTabConnectionMenu(); };
+        list.appendChild(none);
+
+        const items = (state.connections || []).filter(c => !q || c.name.toLowerCase().includes(q));
+        items.forEach(conn => {
+            const isSelected = tab.connId === conn.id;
+            const connected = state.autocompleteCache.has(conn.id);
+            const color = conn.properties?.color || '';
+            const item = document.createElement('div');
+            item.className = 'tab-conn-menu-item' + (isSelected ? ' selected' : '');
+            const dotStyle = color ? ` style="background:${escapeHtml(color)}"` : '';
+            const statusCls = connected ? ' connected' : '';
+            item.innerHTML = `
+                <span class="chip-dot${statusCls}"${dotStyle}></span>
+                <span class="menu-item-text">${escapeHtml(conn.name)}</span>
+                ${connected ? '<span class="menu-item-badge">●</span>' : ''}
+            `;
+            item.onclick = () => { pickConnectionForActiveTab(conn.id); hideTabConnectionMenu(); };
+            list.appendChild(item);
+        });
+
+        if (items.length === 0 && q) {
+            const empty = document.createElement('div');
+            empty.className = 'tab-conn-menu-empty';
+            empty.textContent = 'No matching connection';
+            list.appendChild(empty);
+        }
+
+        // Auto-highlight first item so Enter always has a target.
+        // Prefer a connection row (skip "(None)" when the user is searching).
+        const rendered = list.querySelectorAll('.tab-conn-menu-item');
+        if (rendered.length) {
+            const firstIdx = (q && rendered.length > 1) ? 1 : 0;
+            setActive(firstIdx);
+        }
+    };
+    renderList('');
+
+    // Hover should follow keyboard highlight so the two don't desync.
+    list.addEventListener('mousemove', (e) => {
+        const item = e.target.closest('.tab-conn-menu-item');
+        if (!item) return;
+        const items = Array.from(list.querySelectorAll('.tab-conn-menu-item'));
+        setActive(items.indexOf(item));
+    });
+
+    search.addEventListener('input', () => renderList(search.value));
+    search.addEventListener('keydown', (e) => {
+        const items = list.querySelectorAll('.tab-conn-menu-item');
+        if (e.key === 'Escape') { e.preventDefault(); hideTabConnectionMenu(); return; }
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (!items.length) return;
+            const next = Math.min(currentActiveIdx() + 1, items.length - 1);
+            setActive(Math.max(0, next));
+            return;
+        }
+        if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (!items.length) return;
+            const next = Math.max(currentActiveIdx() - 1, 0);
+            setActive(next);
+            return;
+        }
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            const idx = currentActiveIdx();
+            const target = idx >= 0 ? items[idx] : items[0];
+            if (target) target.click();
+            return;
+        }
+    });
+
+    document.body.appendChild(menu);
+
+    // Position under the anchor (chip element). Fall back to tab list area.
+    const anchor = anchorEl || document.querySelector(`[data-tab-anchor="${tabId}"]`) || document.getElementById('tab-list');
+    const rect = anchor.getBoundingClientRect();
+    const top = rect.bottom + 4;
+    let left = rect.left;
+    const menuWidth = 260;
+    if (left + menuWidth > window.innerWidth) left = window.innerWidth - menuWidth - 8;
+    menu.style.top = `${top}px`;
+    menu.style.left = `${Math.max(8, left)}px`;
+
+    setTimeout(() => search.focus(), 0);
+
+    const onDocClick = (e) => { if (!menu.contains(e.target)) hideTabConnectionMenu(); };
+    const onEsc = (e) => { if (e.key === 'Escape') hideTabConnectionMenu(); };
+    menu._cleanup = () => {
+        document.removeEventListener('mousedown', onDocClick, true);
+        document.removeEventListener('keydown', onEsc, true);
+    };
+    document.addEventListener('mousedown', onDocClick, true);
+    document.addEventListener('keydown', onEsc, true);
+}
+
+function hideTabConnectionMenu() {
+    const existing = document.getElementById('tab-conn-menu');
+    if (!existing) return;
+    try { existing._cleanup && existing._cleanup(); } catch (e) {}
+    existing.remove();
+}
+
+// Called when the user picks a connection from the tab chip dropdown.
+// If the connection isn't open yet, connect first so queries work immediately.
+async function pickConnectionForActiveTab(connId) {
+    if (connId === null) {
+        setActiveTabConnection(null, null);
+        refreshConnectionIndicators(getActiveTab());
+        renderTabs();
+        updateStatus('Connection detached from tab');
+        return;
+    }
+    const conn = state.connections.find(c => c.id === connId);
+    if (!conn) return;
+    try {
+        await api.connections.connect(conn.id);
+        setActiveTabConnection(conn.id, conn.name);
+        refreshConnectionIndicators(getActiveTab());
+        renderTabs();
+        updateStatus(`Connected: ${conn.name}`);
+        loadAutoCompleteCache(conn.id);
+    } catch (e) {
+        updateStatus(`Connection failed: ${e.message}`, true);
+    }
+}
+
+// Keyboard shortcut entry point — opens the dropdown anchored to the active tab's chip.
+function openActiveTabConnectionMenu() {
+    const tab = getActiveTab();
+    if (!tab) return;
+    if (tab.type === 'erd') { updateStatus('ERD tab connection is locked', true); return; }
+    const tabEls = document.querySelectorAll('#tab-list .tab');
+    let anchor = null;
+    state.editors.forEach((t, idx) => { if (t.id === tab.id) anchor = tabEls[idx]?.querySelector('.tab-conn-chip') || tabEls[idx]; });
+    showTabConnectionMenu(tab.id, anchor);
 }
 
 function getCurrentSql() {
@@ -688,7 +1329,82 @@ function getCurrentSql() {
     const activeTab = state.editors.find(t => t.id === state.activeEditorId);
     if (activeTab && activeTab.type !== 'sql') return '';
     const selection = monacoEditor.getModel().getValueInRange(monacoEditor.getSelection());
-    return selection.trim() ? selection : monacoEditor.getValue();
+    if (selection.trim()) return selection;
+    return getSqlAtCursor();
+}
+
+function getAllSql() {
+    if (!monacoEditor) return '';
+    const activeTab = state.editors.find(t => t.id === state.activeEditorId);
+    if (activeTab && activeTab.type !== 'sql') return '';
+    return monacoEditor.getValue();
+}
+
+// Returns the SQL statement containing the current cursor, split by ';'.
+// Strips block/line comments during splitting so a ';' inside a comment is ignored.
+function getSqlAtCursor() {
+    if (!monacoEditor) return '';
+    const model = monacoEditor.getModel();
+    const pos = monacoEditor.getPosition();
+    if (!model || !pos) return monacoEditor.getValue();
+    const full = model.getValue();
+    const cursorOffset = model.getOffsetAt(pos);
+
+    const boundaries = findStatementBoundaries(full);
+    for (const { start, end } of boundaries) {
+        if (cursorOffset >= start && cursorOffset <= end) {
+            return full.substring(start, end).trim();
+        }
+    }
+    // Fallback: last statement if cursor is past everything
+    if (boundaries.length > 0) {
+        const last = boundaries[boundaries.length - 1];
+        return full.substring(last.start, last.end).trim();
+    }
+    return full.trim();
+}
+
+function findStatementBoundaries(sql) {
+    const result = [];
+    let start = 0;
+    let i = 0;
+    const n = sql.length;
+    while (i < n) {
+        const ch = sql[i];
+        const next = sql[i + 1];
+        // line comment
+        if (ch === '-' && next === '-') {
+            while (i < n && sql[i] !== '\n') i++;
+            continue;
+        }
+        // block comment
+        if (ch === '/' && next === '*') {
+            i += 2;
+            while (i < n && !(sql[i] === '*' && sql[i + 1] === '/')) i++;
+            if (i < n) i += 2;
+            continue;
+        }
+        // single / double quoted string
+        if (ch === "'" || ch === '"' || ch === '`') {
+            const quote = ch;
+            i++;
+            while (i < n) {
+                if (sql[i] === '\\' && i + 1 < n) { i += 2; continue; }
+                if (sql[i] === quote) { i++; break; }
+                i++;
+            }
+            continue;
+        }
+        if (ch === ';') {
+            result.push({ start, end: i + 1 });
+            start = i + 1;
+        }
+        i++;
+    }
+    if (start < n && sql.substring(start).trim()) {
+        result.push({ start, end: n });
+    }
+    return result;
 }
 
 // ============================================================
@@ -737,6 +1453,10 @@ function renderTree() {
     ungrouped.forEach(conn => {
         container.appendChild(createConnectionNode(conn));
     });
+
+    // Apply tab-usage badges + active highlight after rebuilding the tree
+    try { refreshTreeConnectionBadges(); } catch (e) {}
+    try { refreshSessionsTabIfVisible(); } catch (e) {}
 }
 
 function createConnectionNode(conn) {
@@ -755,6 +1475,7 @@ function createConnectionNode(conn) {
             <span class="tree-arrow">&#9654;</span>
             <span class="tree-icon icon-db">&#9711;</span>
             <span class="tree-label">${colorDot}${escapeHtml(conn.name || conn.databaseType)}${sshBadge}</span>
+            <span class="conn-tab-usage-badge" style="display:none"></span>
         </div>
         <div class="tree-children"></div>
     `;
@@ -810,7 +1531,10 @@ const SVG_EYE_OFF = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none"
 let showHiddenSchemas = false;
 
 async function activateConnection(conn, node) {
-    state.activeConnectionId = conn.id;
+    // Phase A: assign the selected connection to the currently active editor tab.
+    // `setActiveTabConnection` also mirrors to `state.activeConnectionId` for
+    // back-compat with any intermediate callers that still read the global.
+    setActiveTabConnection(conn.id, conn.name);
     updateStatus(`Connecting to ${conn.name}...`);
 
     try {
@@ -962,17 +1686,22 @@ function loadSchemaChildren(connId, schema, schemaNode) {
     const childrenEl = schemaNode.querySelector('.tree-children');
     childrenEl.innerHTML = '';
 
-    // Tables folder
-    const tablesFolder = createCategoryFolder('Tables', SVG_FOLDER_TABLE, 'icon-table', () => loadTablesIntoFolder(connId, schema, tablesFolder));
+    const conn = state.connections.find(c => c.id === connId);
+    const isEs = conn && conn.databaseType === 'ELASTICSEARCH';
+
+    // Tables / Indices folder
+    const tablesLabel = isEs ? 'Indices' : 'Tables';
+    const tablesFolder = createCategoryFolder(tablesLabel, SVG_FOLDER_TABLE, 'icon-table', () => loadTablesIntoFolder(connId, schema, tablesFolder));
     childrenEl.appendChild(tablesFolder);
 
-    // Routines folder
-    const routinesFolder = createCategoryFolder('Routines', SVG_FOLDER_ROUTINE, 'icon-routine', () => loadRoutinesIntoFolder(connId, schema, routinesFolder));
-    childrenEl.appendChild(routinesFolder);
+    // Routines / Events — ES has neither concept
+    if (!isEs) {
+        const routinesFolder = createCategoryFolder('Routines', SVG_FOLDER_ROUTINE, 'icon-routine', () => loadRoutinesIntoFolder(connId, schema, routinesFolder));
+        childrenEl.appendChild(routinesFolder);
 
-    // Events folder
-    const eventsFolder = createCategoryFolder('Events', SVG_FOLDER_EVENT, 'icon-event', () => loadEventsIntoFolder(connId, schema, eventsFolder));
-    childrenEl.appendChild(eventsFolder);
+        const eventsFolder = createCategoryFolder('Events', SVG_FOLDER_EVENT, 'icon-event', () => loadEventsIntoFolder(connId, schema, eventsFolder));
+        childrenEl.appendChild(eventsFolder);
+    }
 
     schemaNode.classList.add('expanded');
 }
@@ -1145,12 +1874,15 @@ function createTableNode(connId, schema, table) {
 
     let loaded = false;
     const content = node.querySelector('.tree-node-content');
-    content.onclick = () => selectTreeNode(content);
+    content.onclick = () => {
+        selectTreeNode(content);
+        if (typeof Inspector !== 'undefined') {
+            Inspector.show({ type: 'table', connId, schema, table: table.name });
+        }
+    };
 
     content.ondblclick = () => {
-        if (monacoEditor) {
-            monacoEditor.setValue(`SELECT * FROM ${schema}.${table.name} LIMIT 100;`);
-        }
+        insertSqlSmart(buildSelectAll(connId, schema, table.name));
     };
 
     // Right-click context for DDL/Indexes
@@ -1244,10 +1976,7 @@ function attachErDiagramClickHandlers(connId, schema) {
         if (!name || name.includes(' ') || name.includes('(')) return; // skip type labels
         textEl.style.cursor = 'pointer';
         textEl.onclick = () => {
-            if (monacoEditor) {
-                monacoEditor.setValue(`SELECT * FROM ${schema}.${name} LIMIT 100;`);
-                monacoEditor.focus();
-            }
+            insertSqlSmart(buildSelectAll(connId, schema, name));
             document.getElementById('er-dialog').style.display = 'none';
             updateStatus(`Loaded: SELECT * FROM ${name}`);
         };
@@ -1317,7 +2046,7 @@ function showTableContextMenu(e, connId, schema, tableName) {
     document.body.appendChild(menu);
 
     menu.querySelector('[data-action="select-top"]').onclick = () => {
-        if (monacoEditor) monacoEditor.setValue(`SELECT * FROM ${schema}.${tableName} LIMIT 100;`);
+        insertSqlSmart(buildSelectAll(connId, schema, tableName));
         menu.remove();
     };
     menu.querySelector('[data-action="show-ddl"]').onclick = async () => {
@@ -1424,27 +2153,46 @@ async function showTableIndexes(connId, schema, tableName) {
 // ============================================================
 // Query Execution
 // ============================================================
-async function executeQuery() {
-    if (!state.activeConnectionId) {
+async function executeQuery(runAll = false) {
+    const connId = getActiveConnectionId();
+    if (!connId) {
         updateStatus('No active connection. Double-click a connection in the tree.', true);
         return;
     }
-    const sql = getCurrentSql();
+    const sql = runAll ? getAllSql() : getCurrentSql();
     if (!sql.trim()) {
         updateStatus('No SQL to execute', true);
         return;
     }
 
+    // #127 Phase F — a lone BEGIN / START TRANSACTION without a matching
+    // COMMIT/ROLLBACK in the same submission won't actually open a reusable
+    // transaction because the next execute() borrows a different pooled
+    // connection. Warn once per session.
+    if (/\b(BEGIN\b(?!\s+(?:TRY|CATCH|END))|START\s+TRANSACTION)\b/i.test(sql)
+        && !/\b(COMMIT|ROLLBACK)\b/i.test(sql)) {
+        showTxWarningBanner();
+    }
+
     const executionId = 'exec-' + Date.now();
     state.currentExecutionId = executionId;
+    // #137 Sessions tab — track current run so the Sessions panel can show it.
+    state.currentExecution = {
+        id: executionId,
+        connId,
+        tabId: state.activeEditorId,
+        sql,
+        startedAt: Date.now(),
+    };
+    try { refreshSessionsTabIfVisible(); } catch (e) {}
 
     updateStatus('Executing...');
     document.getElementById('btn-run').disabled = true;
     showCancelButton(true, executionId);
 
     try {
-        const results = await api.query.execute(state.activeConnectionId, sql, 1000, executionId);
-        state.lastResult = { connectionId: state.activeConnectionId, sql };
+        const results = await api.query.execute(connId, sql, 1000, executionId);
+        state.lastResult = { connectionId: connId, sql };
         // Multi-query: results is an array
         if (Array.isArray(results) && results.length > 1) {
             displayMultiResult(results);
@@ -1456,8 +2204,10 @@ async function executeQuery() {
         displayError(e.message);
     } finally {
         state.currentExecutionId = null;
+        state.currentExecution = null;
         document.getElementById('btn-run').disabled = false;
         showCancelButton(false);
+        try { refreshSessionsTabIfVisible(); } catch (e) {}
     }
 }
 
@@ -1508,7 +2258,8 @@ function formatSql() {
 }
 
 async function executeExplain(analyze = false) {
-    if (!state.activeConnectionId) {
+    const connId = getActiveConnectionId();
+    if (!connId) {
         updateStatus('No active connection. Double-click a connection in the tree.', true);
         return;
     }
@@ -1523,8 +2274,8 @@ async function executeExplain(analyze = false) {
     document.getElementById('btn-run').disabled = true;
 
     try {
-        const result = await api.query.explain(state.activeConnectionId, sql, analyze);
-        state.lastResult = { connectionId: state.activeConnectionId, sql, explain: true };
+        const result = await api.query.explain(connId, sql, analyze);
+        state.lastResult = { connectionId: connId, sql, explain: true };
         displayResult(result, label);
     } catch (e) {
         displayError(e.message);
@@ -1543,7 +2294,7 @@ function displayResult(result, resultLabel) {
         const sql = state.lastResult?.sql || getCurrentSql();
         container.innerHTML = `<div class="result-error">
             <div class="result-error-msg">${escapeHtml(result.errorMessage)}</div>
-            ${state.activeConnectionId ? `<button class="btn btn-ghost btn-sm ai-fix-btn">
+            ${getActiveConnectionId() ? `<button class="btn btn-ghost btn-sm ai-fix-btn">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 2.8 4 6 4 6s4-3.2 4-6a4 4 0 0 0-4-4z"/><circle cx="12" cy="6" r="1.5"/></svg>
                 Ask AI to Fix
             </button>` : ''}
@@ -1592,7 +2343,7 @@ function displayResult(result, resultLabel) {
 
     applyFilterAndSort();
 
-    const conn = state.connections.find(c => c.id === state.activeConnectionId);
+    const conn = state.connections.find(c => c.id === getActiveConnectionId());
     updateStatus(`Connected: ${conn ? conn.name : ''}`, false, result.rows.length, result.executionTimeMs);
 }
 
@@ -2060,9 +2811,10 @@ async function performCellUpdate(rowIdx, colIdx, newValue) {
     const { tableName, schemaName, columnNames } = state.resultData;
     if (!tableName) throw new Error('Table name not available');
 
+    const connId = getActiveConnectionId();
     // Get primary keys (cached)
     if (!state.primaryKeyCache) {
-        const pks = await api.metadata.primaryKeys(state.activeConnectionId, schemaName, tableName);
+        const pks = await api.metadata.primaryKeys(connId, schemaName, tableName);
         if (!pks || pks.length === 0) throw new Error('No primary key found for table ' + tableName);
         state.primaryKeyCache = pks.map(pk => pk.columnName);
     }
@@ -2079,7 +2831,7 @@ async function performCellUpdate(rowIdx, colIdx, newValue) {
     }
 
     const column = columnNames[colIdx];
-    return await api.query.updateCell(state.activeConnectionId, schemaName, tableName, primaryKeys, column, newValue);
+    return await api.query.updateCell(connId, schemaName, tableName, primaryKeys, column, newValue);
 }
 
 async function addNewRow() {
@@ -2092,7 +2844,7 @@ async function addNewRow() {
         values[col] = val === '' ? null : val;
     }
     try {
-        const result = await api.query.insertRow(state.activeConnectionId, schemaName, tableName, values);
+        const result = await api.query.insertRow(getActiveConnectionId(), schemaName, tableName, values);
         if (result.error) {
             updateStatus('Insert failed: ' + result.errorMessage, true);
         } else {
@@ -2115,9 +2867,10 @@ async function deleteSelectedRow() {
     const row = state.resultData.rows[rowIdx];
     if (!row) return;
 
+    const connId = getActiveConnectionId();
     // Get PKs
     if (!state.primaryKeyCache) {
-        const pks = await api.metadata.primaryKeys(state.activeConnectionId, schemaName, tableName);
+        const pks = await api.metadata.primaryKeys(connId, schemaName, tableName);
         if (!pks || pks.length === 0) { updateStatus('No primary key found', true); return; }
         state.primaryKeyCache = pks.map(pk => pk.columnName);
     }
@@ -2129,7 +2882,7 @@ async function deleteSelectedRow() {
     }
 
     try {
-        const result = await api.query.deleteRow(state.activeConnectionId, schemaName, tableName, primaryKeys);
+        const result = await api.query.deleteRow(connId, schemaName, tableName, primaryKeys);
         if (result.error) {
             updateStatus('Delete failed: ' + result.errorMessage, true);
         } else {
@@ -2155,7 +2908,7 @@ async function askAiToFix(errorMsg) {
     resultDiv.innerHTML = '<span class="ai-loading-dots">AI is analyzing<span>...</span></span>';
 
     try {
-        const result = await api.llm.fixSql(state.activeConnectionId, sql, error);
+        const result = await api.llm.fixSql(getActiveConnectionId(), sql, error);
 
         if (result.error) {
             resultDiv.className = 'ai-fix-result ai-fix-error';
@@ -2202,7 +2955,7 @@ function displayError(msg) {
     const sql = getCurrentSql();
     container.innerHTML = `<div class="result-error">
         <div class="result-error-msg">${escapeHtml(msg)}</div>
-        ${state.activeConnectionId ? `<button class="btn btn-ghost btn-sm ai-fix-btn">
+        ${getActiveConnectionId() ? `<button class="btn btn-ghost btn-sm ai-fix-btn">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 2.8 4 6 4 6s4-3.2 4-6a4 4 0 0 0-4-4z"/><circle cx="12" cy="6" r="1.5"/></svg>
             Ask AI to Fix
         </button>` : ''}
@@ -2361,15 +3114,19 @@ async function handleContextAction(action) {
     if (!contextConn) return;
 
     switch (action) {
-        case 'connect':
+        case 'assign-to-current-tab':
+        case 'connect': // legacy alias
+            activateConnection(contextConn, contextNode);
+            break;
+        case 'open-in-new-tab':
+            // Spawn a new SQL tab, assign this connection to it, then activate.
+            addEditorTab();
             activateConnection(contextConn, contextNode);
             break;
         case 'disconnect':
             await api.connections.disconnect(contextConn.id);
-            if (state.activeConnectionId === contextConn.id) {
-                state.activeConnectionId = null;
-                clearAutoCompleteCache();
-            }
+            clearAutoCompleteCache(contextConn.id);
+            detachConnectionFromTabs(contextConn.id);
             contextNode.classList.remove('expanded');
             contextNode.querySelector('.tree-children').innerHTML = '';
             updateStatus('Disconnected');
@@ -2390,10 +3147,8 @@ async function handleContextAction(action) {
         case 'delete':
             if (confirm(`Delete connection "${contextConn.name}"?`)) {
                 await api.connections.delete(contextConn.id);
-                if (state.activeConnectionId === contextConn.id) {
-                    state.activeConnectionId = null;
-                    clearAutoCompleteCache();
-                }
+                clearAutoCompleteCache(contextConn.id);
+                detachConnectionFromTabs(contextConn.id);
                 await loadConnections();
             }
             break;
@@ -2404,7 +3159,7 @@ async function handleContextAction(action) {
 // Export
 // ============================================================
 async function exportData(format) {
-    if (!state.activeConnectionId || !state.lastResult) {
+    if (!getActiveConnectionId() || !state.lastResult) {
         updateStatus('No query result to export', true);
         return;
     }
@@ -2431,6 +3186,1132 @@ async function exportData(format) {
 
 // backward compat alias
 async function exportCsv() { return exportData('csv'); }
+
+// ============================================================
+// Global Right Panel (#99)
+// ============================================================
+const RightPanel = (() => {
+    const LS_OPEN = 'dbee.rightPanel.open';
+    const LS_ACTIVE = 'dbee.rightPanel.activeTab';
+    const LS_WIDTH = 'dbee.rightPanel.width';
+    const MIN_WIDTH = 240;
+    const MAX_WIDTH = 720;
+    const DEFAULT_WIDTH = 320;
+
+    const tabs = new Map();
+    let panelEl, resizerEl, tabListEl, bodyEl, closeBtn, toggleBtn;
+    let activeId = null;
+    let isOpen = false;
+    let ready = false;
+
+    function readWidth() {
+        const v = parseInt(localStorage.getItem(LS_WIDTH), 10);
+        if (!isFinite(v)) return DEFAULT_WIDTH;
+        return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, v));
+    }
+
+    function applyOpenState() {
+        if (!panelEl) return;
+        if (isOpen) {
+            panelEl.classList.remove('grp-hidden');
+            resizerEl.classList.remove('grp-hidden');
+            toggleBtn && toggleBtn.classList.add('active');
+        } else {
+            panelEl.classList.add('grp-hidden');
+            resizerEl.classList.add('grp-hidden');
+            toggleBtn && toggleBtn.classList.remove('active');
+        }
+        try { localStorage.setItem(LS_OPEN, isOpen ? '1' : '0'); } catch (e) {}
+    }
+
+    function renderTabButtons() {
+        if (!tabListEl) return;
+        tabListEl.innerHTML = '';
+        for (const t of tabs.values()) {
+            const btn = document.createElement('button');
+            btn.className = 'grp-tab' + (t.id === activeId ? ' active' : '');
+            btn.setAttribute('role', 'tab');
+            btn.setAttribute('data-tab-id', t.id);
+            btn.setAttribute('aria-selected', t.id === activeId ? 'true' : 'false');
+            btn.title = t.tooltip || t.label;
+            if (t.icon) btn.insertAdjacentHTML('beforeend', t.icon);
+            const label = document.createElement('span');
+            label.textContent = t.label;
+            btn.appendChild(label);
+            btn.onclick = () => setActive(t.id);
+            t.btnEl = btn;
+            tabListEl.appendChild(btn);
+        }
+    }
+
+    function ensurePane(tab) {
+        if (!tab.paneEl) {
+            const pane = document.createElement('div');
+            pane.className = 'grp-tab-pane';
+            pane.setAttribute('data-tab-pane', tab.id);
+            bodyEl.appendChild(pane);
+            tab.paneEl = pane;
+        }
+        if (!tab.mounted && typeof tab.render === 'function') {
+            try { tab.render(tab.paneEl); }
+            catch (e) { console.error('[RightPanel] tab render error', tab.id, e); }
+            tab.mounted = true;
+        }
+    }
+
+    function showActivePane() {
+        if (!bodyEl) return;
+        bodyEl.querySelectorAll('.grp-tab-pane').forEach(p => p.classList.remove('active'));
+        tabListEl.querySelectorAll('.grp-tab').forEach(b => {
+            const id = b.getAttribute('data-tab-id');
+            b.classList.toggle('active', id === activeId);
+            b.setAttribute('aria-selected', id === activeId ? 'true' : 'false');
+        });
+        if (!activeId) return;
+        const tab = tabs.get(activeId);
+        if (!tab) return;
+        ensurePane(tab);
+        tab.paneEl.classList.add('active');
+    }
+
+    function setActive(tabId) {
+        if (!tabs.has(tabId)) return;
+        activeId = tabId;
+        try { localStorage.setItem(LS_ACTIVE, tabId); } catch (e) {}
+        showActivePane();
+    }
+
+    function open(tabId) {
+        if (!ready) { isOpen = true; return; }
+        if (tabId && tabs.has(tabId)) {
+            activeId = tabId;
+            try { localStorage.setItem(LS_ACTIVE, tabId); } catch (e) {}
+        } else if (!activeId && tabs.size > 0) {
+            activeId = tabs.keys().next().value;
+        }
+        isOpen = true;
+        applyOpenState();
+        showActivePane();
+    }
+
+    function close() {
+        isOpen = false;
+        applyOpenState();
+    }
+
+    function toggle() {
+        if (isOpen) close(); else open();
+    }
+
+    function setWidth(px) {
+        const w = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, Math.round(px)));
+        if (panelEl) panelEl.style.width = w + 'px';
+        try { localStorage.setItem(LS_WIDTH, String(w)); } catch (e) {}
+    }
+
+    function registerTab(tab) {
+        if (!tab || !tab.id || !tab.label) {
+            throw new Error('RightPanel.registerTab requires {id, label}');
+        }
+        tabs.set(tab.id, {
+            id: tab.id,
+            label: tab.label,
+            tooltip: tab.tooltip || '',
+            icon: tab.icon || '',
+            render: tab.render,
+            mounted: false,
+            paneEl: null,
+            btnEl: null,
+        });
+        if (ready) {
+            renderTabButtons();
+            if (isOpen) showActivePane();
+        }
+    }
+
+    function initResize() {
+        let resizing = false;
+        resizerEl.addEventListener('mousedown', (e) => {
+            resizing = true;
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+            e.preventDefault();
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!resizing) return;
+            const w = window.innerWidth - e.clientX;
+            setWidth(w);
+        });
+        document.addEventListener('mouseup', () => {
+            if (resizing) {
+                resizing = false;
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+            }
+        });
+    }
+
+    function init() {
+        panelEl = document.getElementById('global-right-panel');
+        resizerEl = document.getElementById('global-right-resizer');
+        tabListEl = document.getElementById('grp-tab-list');
+        bodyEl = document.getElementById('grp-body');
+        closeBtn = document.getElementById('grp-close');
+        toggleBtn = document.getElementById('btn-toggle-right-panel');
+
+        if (!panelEl) return;
+
+        panelEl.style.width = readWidth() + 'px';
+
+        const savedActive = localStorage.getItem(LS_ACTIVE);
+        if (savedActive) activeId = savedActive;
+        const savedOpen = localStorage.getItem(LS_OPEN) === '1';
+
+        closeBtn && (closeBtn.onclick = close);
+        initResize();
+
+        // Built-in placeholder tab — future tabs (#100~#107) may replace/extend
+        registerTab({
+            id: 'inspector',
+            label: 'Inspector',
+            icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+            render: (el) => {
+                el.innerHTML = '<div class="grp-empty">'
+                    + '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>'
+                    + '<div>컨텍스트 정보가 여기에 표시됩니다.</div>'
+                    + '<div style="font-size:11px;opacity:0.7">테이블·행·쿼리 선택 시 상세 정보 (후속 작업)</div>'
+                    + '</div>';
+            },
+        });
+
+        ready = true;
+        renderTabButtons();
+
+        if (savedOpen) {
+            open(activeId);
+        } else {
+            applyOpenState();
+        }
+    }
+
+    return { init, registerTab, open, close, toggle, setActive, setWidth };
+})();
+
+// ============================================================
+// Sessions Tab (#137 Phase A)
+// Shows active DB connections, tab↔connection mapping, and the currently
+// running query. Driven entirely by `state`; lifecycle hooks in tab/query
+// code call refreshSessionsTabIfVisible() so the view stays current without
+// polling. A 1s tick is started only while the tab is mounted+visible, for
+// the "elapsed" counter in Running Queries.
+// ============================================================
+const SessionsTab = (() => {
+    let root = null;
+    let tickTimer = null;
+    let poolTimer = null;
+    const LS_POOL_AUTO = 'dbee.sess.poolAutoRefresh';
+    let poolAutoRefresh = localStorage.getItem(LS_POOL_AUTO) === '1';
+    let lastPoolStats = [];
+    let poolLoading = false;
+    // Server Sessions (#139 Phase C)
+    let svrTimer = null;
+    const LS_SVR_AUTO = 'dbee.sess.svrAutoRefresh';
+    let svrAutoRefresh = localStorage.getItem(LS_SVR_AUTO) === '1';
+    let lastSvrResponse = null; // { supported, sessions, error, connId, connName }
+    let svrLoading = false;
+    // UX integration (#140 Phase D)
+    const LS_SECTIONS = 'dbee.sess.sectionsCollapsed';
+    const LS_AUTO_DISMISS = 'dbee.sess.autoBannerDismissed';
+    let filterText = '';
+    let autoBannerDismissed = localStorage.getItem(LS_AUTO_DISMISS) === '1';
+    function loadSectionsCollapsed() {
+        try { return new Set(JSON.parse(localStorage.getItem(LS_SECTIONS) || '[]')); }
+        catch (e) { return new Set(); }
+    }
+    function saveSectionsCollapsed(set) {
+        try { localStorage.setItem(LS_SECTIONS, JSON.stringify([...set])); } catch (e) {}
+    }
+    function matchesFilter(...parts) {
+        if (!filterText) return true;
+        const needle = filterText.toLowerCase();
+        return parts.some(p => p && String(p).toLowerCase().includes(needle));
+    }
+    function connColorStyle(connId) {
+        const conn = state.connections.find(c => c.id === connId);
+        const color = conn?.properties?.color || '';
+        return color ? ` style="--row-color:${escapeHtml(color)}"` : '';
+    }
+
+    function isActiveRightPanelTab() {
+        if (!root) return false;
+        const pane = root.closest('.grp-tab-pane');
+        return !!(pane && pane.classList.contains('active'));
+    }
+
+    function connectionStatus(connId) {
+        return state.autocompleteCache && state.autocompleteCache.has(connId) ? 'connected' : 'idle';
+    }
+
+    function countTabsUsing(connId) {
+        if (!connId) return 0;
+        return state.editors.filter(t => t.connId === connId).length;
+    }
+
+    function truncate(s, n) {
+        if (!s) return '';
+        const t = s.replace(/\s+/g, ' ').trim();
+        return t.length > n ? t.slice(0, n - 1) + '…' : t;
+    }
+
+    function formatElapsed(ms) {
+        if (ms < 1000) return ms + 'ms';
+        const s = Math.floor(ms / 1000);
+        if (s < 60) return s + 's';
+        const m = Math.floor(s / 60);
+        return m + 'm ' + (s % 60) + 's';
+    }
+
+    // Tree: each connection row is expandable; children = tabs using it.
+    // Collapsed state persists across reloads (inverted store — missing = expanded).
+    const LS_COLLAPSED = 'dbee.sess.collapsed';
+    function loadCollapsed() {
+        try { return new Set(JSON.parse(localStorage.getItem(LS_COLLAPSED) || '[]')); }
+        catch (e) { return new Set(); }
+    }
+    function saveCollapsed(set) {
+        try { localStorage.setItem(LS_COLLAPSED, JSON.stringify([...set])); } catch (e) {}
+    }
+
+    function renderTabChild(tab) {
+        const isActive = tab.id === state.activeEditorId ? ' sess-tab-active' : '';
+        const typeIcon = tab.type === 'erd' ? '📊 ' : '';
+        const dirty = tab.dirty ? '<span class="sess-dirty">●</span>' : '';
+        return `
+            <div class="sess-row sess-tab-child${isActive}" data-tab-id="${escapeHtml(tab.id)}">
+                <span class="sess-row-name" title="${escapeHtml(tab.name)}">${typeIcon}${escapeHtml(tab.name)}${dirty}</span>
+            </div>`;
+    }
+
+    function renderActiveConnections() {
+        const collapsed = loadCollapsed();
+        const items = [];
+
+        (state.connections || []).forEach(conn => {
+            const status = connectionStatus(conn.id);
+            const count = countTabsUsing(conn.id);
+            const color = conn.properties?.color || '';
+            const colorStyle = color ? ` style="--row-color:${escapeHtml(color)}"` : '';
+            const dbType = conn.databaseType || conn.dbType || '';
+            // Filter: match connection name/dbType OR any child tab name.
+            const kidsAll = state.editors.filter(t => t.connId === conn.id);
+            const connMatches = matchesFilter(conn.name, dbType);
+            const anyKidMatches = kidsAll.some(t => matchesFilter(t.name));
+            if (filterText && !connMatches && !anyKidMatches) return;
+            const isCollapsed = collapsed.has(conn.id);
+            const canExpand = count > 0;
+            const arrow = canExpand
+                ? `<span class="sess-arrow${isCollapsed ? '' : ' expanded'}" data-action="toggle" data-id="${escapeHtml(conn.id)}" title="${isCollapsed ? 'Expand' : 'Collapse'}">▶</span>`
+                : `<span class="sess-arrow sess-arrow-empty">·</span>`;
+            const badge = count >= 1
+                ? `<span class="sess-badge sess-badge-count" title="${count} tab(s) use this">×${count}</span>`
+                : '';
+            const statusDot = `<span class="sess-dot sess-dot-${status}" title="${status}"></span>`;
+            const actionBtn = status === 'connected'
+                ? `<button class="sess-btn-mini" data-action="disconnect" data-id="${escapeHtml(conn.id)}" title="Disconnect">Disconnect</button>`
+                : `<button class="sess-btn-mini" data-action="connect" data-id="${escapeHtml(conn.id)}" title="Connect & assign to current tab">Connect</button>`;
+
+            items.push(`
+                <div class="sess-row sess-conn-row"${colorStyle} data-id="${escapeHtml(conn.id)}">
+                    ${arrow}
+                    ${statusDot}
+                    <span class="sess-row-name" title="${escapeHtml(conn.name)}">${escapeHtml(conn.name)}</span>
+                    <span class="sess-row-sub">${escapeHtml(dbType)}</span>
+                    ${badge}
+                    ${actionBtn}
+                </div>`);
+
+            if (canExpand && !isCollapsed) {
+                // When filter is active, only show kids that match (unless
+                // the parent itself matched, in which case show all).
+                const kidsRendered = (filterText && !connMatches)
+                    ? kidsAll.filter(t => matchesFilter(t.name))
+                    : kidsAll;
+                const kids = kidsRendered.map(renderTabChild).join('');
+                items.push(`<div class="sess-children" data-parent="${escapeHtml(conn.id)}">${kids}</div>`);
+            }
+        });
+
+        // Tabs without any assigned connection, grouped at the bottom.
+        const unassigned = (state.editors || []).filter(t => !t.connId && matchesFilter(t.name));
+        if (unassigned.length > 0) {
+            const isCollapsed = collapsed.has('__unassigned__');
+            const arrow = `<span class="sess-arrow${isCollapsed ? '' : ' expanded'}" data-action="toggle" data-id="__unassigned__" title="${isCollapsed ? 'Expand' : 'Collapse'}">▶</span>`;
+            items.push(`
+                <div class="sess-row sess-conn-row sess-conn-unassigned">
+                    ${arrow}
+                    <span class="sess-dot sess-dot-idle"></span>
+                    <span class="sess-row-name">(Unassigned)</span>
+                    <span class="sess-badge sess-badge-count">×${unassigned.length}</span>
+                </div>`);
+            if (!isCollapsed) {
+                const kids = unassigned.map(renderTabChild).join('');
+                items.push(`<div class="sess-children" data-parent="__unassigned__">${kids}</div>`);
+            }
+        }
+
+        return items.length ? items.join('') : `<div class="sess-empty">No connections registered</div>`;
+    }
+
+    function renderPoolStats() {
+        if (poolLoading && lastPoolStats.length === 0) {
+            return `<div class="sess-empty">Loading…</div>`;
+        }
+        if (!lastPoolStats.length) {
+            return `<div class="sess-empty">No open pools. Press refresh after connecting.</div>`;
+        }
+        const filtered = lastPoolStats.filter(s => {
+            const conn = state.connections.find(c => c.id === s.connectionId);
+            return matchesFilter(conn ? conn.name : s.connectionId);
+        });
+        if (!filtered.length) return `<div class="sess-empty">No matches.</div>`;
+        return filtered.map(s => {
+            const conn = state.connections.find(c => c.id === s.connectionId);
+            const name = conn ? conn.name : s.connectionId;
+            const color = conn?.properties?.color || '';
+            const colorStyle = color ? ` style="--row-color:${escapeHtml(color)}"` : '';
+            const total = Math.max(0, s.total || 0);
+            const max = Math.max(1, s.maxPoolSize || total || 1);
+            const active = Math.max(0, s.active || 0);
+            const idle = Math.max(0, s.idle || 0);
+            const awaiting = Math.max(0, s.awaiting || 0);
+            const activePct = Math.round((active / max) * 100);
+            const idlePct = Math.round((idle / max) * 100);
+            const warn = awaiting > 0 || (idle === 0 && active >= max);
+            const warnBadge = warn
+                ? `<span class="sess-badge sess-badge-warn" title="Saturated — ${awaiting} thread(s) waiting">saturated</span>`
+                : '';
+            return `
+                <div class="sess-row sess-pool-row"${colorStyle}>
+                    <span class="sess-row-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+                    <span class="sess-pool-numbers">${active} / ${total} <span class="sess-pool-max">(max ${max})</span></span>
+                    <div class="sess-pool-bar" title="active ${active}, idle ${idle}, max ${max}">
+                        <span class="sess-pool-bar-active" style="width:${activePct}%"></span>
+                        <span class="sess-pool-bar-idle" style="left:${activePct}%;width:${idlePct}%"></span>
+                    </div>
+                    ${awaiting > 0 ? `<span class="sess-pool-await" title="Threads awaiting a connection">⏳ ${awaiting}</span>` : ''}
+                    ${warnBadge}
+                </div>`;
+        }).join('');
+    }
+
+    async function refreshPoolStats() {
+        poolLoading = true;
+        try {
+            const data = await api.connections.poolStats();
+            lastPoolStats = Array.isArray(data) ? data : [];
+        } catch (e) {
+            console.warn('poolStats failed', e);
+            lastPoolStats = [];
+        } finally {
+            poolLoading = false;
+            const el = root && root.querySelector('[data-body="pool"]');
+            if (el) el.innerHTML = renderPoolStats();
+        }
+    }
+
+    function startPoolPollingIfNeeded() {
+        stopPoolPolling();
+        if (!poolAutoRefresh) return;
+        if (!isActiveRightPanelTab()) return;
+        poolTimer = setInterval(() => { refreshPoolStats(); }, 5000);
+    }
+
+    function stopPoolPolling() {
+        if (poolTimer) { clearInterval(poolTimer); poolTimer = null; }
+    }
+
+    function togglePoolAutoRefresh() {
+        poolAutoRefresh = !poolAutoRefresh;
+        try { localStorage.setItem(LS_POOL_AUTO, poolAutoRefresh ? '1' : '0'); } catch (e) {}
+        // Re-render controls so the toggle button shows the new state
+        const ctrl = root && root.querySelector('[data-body="pool-controls"]');
+        if (ctrl) ctrl.innerHTML = renderPoolControls();
+        if (poolAutoRefresh) { refreshPoolStats(); startPoolPollingIfNeeded(); }
+        else stopPoolPolling();
+    }
+
+    function renderPoolControls() {
+        const cls = poolAutoRefresh ? 'sess-toggle-on' : '';
+        return `
+            <button class="sess-btn-mini" data-action="pool-refresh" title="Refresh now">↻</button>
+            <button class="sess-btn-mini sess-toggle ${cls}" data-action="pool-toggle-auto" title="Auto-refresh every 5s">
+                Auto ${poolAutoRefresh ? 'on' : 'off'}
+            </button>
+        `;
+    }
+
+    function renderServerSessions() {
+        const r = lastSvrResponse;
+        if (!r) {
+            return `<div class="sess-empty">Select a tab with a connection, then press refresh.</div>`;
+        }
+        if (r.supported === false) {
+            return `<div class="sess-empty">Not supported on ${escapeHtml(r.dialect || 'this database')} yet — Postgres and MySQL only for now.</div>`;
+        }
+        if (r.error) {
+            return `<div class="sess-empty sess-empty-error">Query failed: ${escapeHtml(r.error)}</div>`;
+        }
+        const list = (r.sessions || []).filter(s =>
+            matchesFilter(s.user, s.host, s.database, s.query, s.sessionId));
+        if (!list.length) {
+            return filterText
+                ? `<div class="sess-empty">No matches.</div>`
+                : `<div class="sess-empty">No other server sessions.</div>`;
+        }
+        const colorStyle = connColorStyle(r.connId);
+        return list.map(s => {
+            const duration = (s.durationMs != null && s.durationMs > 0) ? formatElapsed(s.durationMs) : '';
+            const userHost = [s.user, s.host].filter(Boolean).join('@');
+            const queryHtml = s.query
+                ? `<code class="sess-svr-sql">${escapeHtml(truncate(s.query, 160))}</code>`
+                : `<span class="sess-svr-sql sess-svr-sql-empty">(idle)</span>`;
+            return `
+                <div class="sess-row sess-svr-row"${colorStyle} data-pid="${escapeHtml(s.sessionId)}">
+                    <div class="sess-svr-head">
+                        <span class="sess-svr-pid">#${escapeHtml(s.sessionId)}</span>
+                        <span class="sess-svr-user" title="${escapeHtml(userHost)}">${escapeHtml(userHost || '?')}</span>
+                        ${s.database ? `<span class="sess-svr-db">${escapeHtml(s.database)}</span>` : ''}
+                        ${s.state ? `<span class="sess-svr-state">${escapeHtml(s.state)}</span>` : ''}
+                        ${duration ? `<span class="sess-svr-duration">${duration}</span>` : ''}
+                        <button class="sess-btn-mini sess-btn-cancel" data-action="svr-kill" data-id="${escapeHtml(s.sessionId)}" title="Kill session">Kill</button>
+                    </div>
+                    ${queryHtml}
+                </div>`;
+        }).join('');
+    }
+
+    function renderServerControls() {
+        const cls = svrAutoRefresh ? 'sess-toggle-on' : '';
+        return `
+            <button class="sess-btn-mini" data-action="svr-refresh" title="Refresh now">↻</button>
+            <button class="sess-btn-mini sess-toggle ${cls}" data-action="svr-toggle-auto" title="Auto-refresh every 5s">
+                Auto ${svrAutoRefresh ? 'on' : 'off'}
+            </button>
+        `;
+    }
+
+    async function refreshServerSessions() {
+        const connId = getActiveConnectionId();
+        if (!connId) {
+            lastSvrResponse = { supported: true, sessions: [], note: 'no-conn' };
+            const el = root && root.querySelector('[data-body="svr"]');
+            if (el) el.innerHTML = `<div class="sess-empty">Active tab has no connection.</div>`;
+            return;
+        }
+        svrLoading = true;
+        try {
+            const data = await api.apm.sessions(connId, 10);
+            const conn = state.connections.find(c => c.id === connId);
+            lastSvrResponse = {
+                ...data,
+                connId,
+                connName: conn ? conn.name : null,
+                dialect: conn ? (conn.databaseType || conn.dbType) : null,
+            };
+        } catch (e) {
+            lastSvrResponse = { supported: true, sessions: [], error: e.message };
+        } finally {
+            svrLoading = false;
+            const el = root && root.querySelector('[data-body="svr"]');
+            if (el) el.innerHTML = renderServerSessions();
+        }
+    }
+
+    function startServerPollingIfNeeded() {
+        stopServerPolling();
+        if (!svrAutoRefresh) return;
+        if (!isActiveRightPanelTab()) return;
+        svrTimer = setInterval(() => refreshServerSessions(), 5000);
+    }
+    function stopServerPolling() {
+        if (svrTimer) { clearInterval(svrTimer); svrTimer = null; }
+    }
+    function toggleServerAutoRefresh() {
+        svrAutoRefresh = !svrAutoRefresh;
+        try { localStorage.setItem(LS_SVR_AUTO, svrAutoRefresh ? '1' : '0'); } catch (e) {}
+        const ctrl = root && root.querySelector('[data-body="svr-controls"]');
+        if (ctrl) ctrl.innerHTML = renderServerControls();
+        if (svrAutoRefresh) { refreshServerSessions(); startServerPollingIfNeeded(); }
+        else stopServerPolling();
+    }
+
+    async function killServerSession(sessionId) {
+        const connId = getActiveConnectionId();
+        if (!connId || !sessionId) return;
+        const ok = confirm(`Terminate server session #${sessionId}? This will cancel the running query and disconnect that user.`);
+        if (!ok) return;
+        try {
+            const r = await api.apm.kill(connId, sessionId);
+            if (r && r.success) {
+                showToast(r.message || 'Session terminated', 'info');
+                refreshServerSessions();
+            } else {
+                showToast((r && r.message) || 'Kill failed', 'error', 5000);
+            }
+        } catch (e) {
+            showToast('Kill failed: ' + e.message, 'error', 5000);
+        }
+    }
+
+    function renderRunning() {
+        const e = state.currentExecution;
+        if (!e) return `<div class="sess-empty">No query running</div>`;
+        const conn = e.connId ? state.connections.find(c => c.id === e.connId) : null;
+        const tab = state.editors.find(t => t.id === e.tabId);
+        const elapsed = formatElapsed(Date.now() - e.startedAt);
+        if (!matchesFilter(conn?.name, tab?.name, e.sql)) {
+            return `<div class="sess-empty">No matches.</div>`;
+        }
+        const colorStyle = connColorStyle(e.connId);
+        return `
+            <div class="sess-row sess-running-row"${colorStyle}>
+                <span class="sess-dot sess-dot-running" title="running"></span>
+                <div class="sess-running-body">
+                    <div class="sess-running-meta">
+                        <span class="sess-running-conn">${escapeHtml(conn ? conn.name : '(unknown conn)')}</span>
+                        <span class="sess-running-tab">${escapeHtml(tab ? tab.name : '(closed tab)')}</span>
+                        <span class="sess-running-elapsed" data-elapsed>${elapsed}</span>
+                    </div>
+                    <code class="sess-running-sql">${escapeHtml(truncate(e.sql, 120))}</code>
+                </div>
+                <button class="sess-btn-mini sess-btn-cancel" data-action="cancel" data-id="${escapeHtml(e.id)}">Cancel</button>
+            </div>`;
+    }
+
+    function renderSection(id, title, bodyHtml, opts = {}) {
+        const collapsed = loadSectionsCollapsed().has(id);
+        const hint = opts.hint ? `<span class="sess-section-hint">${opts.hint}</span>` : '';
+        const controls = opts.controlsBodyId
+            ? `<span class="sess-section-controls" data-body="${opts.controlsBodyId}" data-stop="1">${opts.controlsHtml || ''}</span>`
+            : '';
+        const arrow = `<span class="sess-sec-arrow${collapsed ? '' : ' expanded'}">▶</span>`;
+        return `
+            <section class="sess-section${collapsed ? ' sess-section-collapsed' : ''}" data-section="${id}">
+                <div class="sess-section-title" data-action="toggle-section" data-section-id="${id}">
+                    <span class="sess-section-title-left">${arrow}<span>${title}</span>${hint}</span>
+                    ${controls}
+                </div>
+                <div class="sess-section-body" data-body="${id}"${collapsed ? ' hidden' : ''}>${bodyHtml}</div>
+            </section>`;
+    }
+
+    function renderUnifiedAutoBanner() {
+        if (autoBannerDismissed) return '';
+        const anyOn = poolAutoRefresh || svrAutoRefresh;
+        return `
+            <div class="sess-auto-banner">
+                <span class="sess-auto-label">Auto-refresh (Pool + Server, 5s):</span>
+                <button class="sess-btn-mini sess-toggle ${anyOn ? 'sess-toggle-on' : ''}" data-action="toggle-all-auto">
+                    ${anyOn ? 'on' : 'off'}
+                </button>
+                <button class="sess-auto-dismiss" data-action="dismiss-auto-banner" title="Hide banner">×</button>
+            </div>`;
+    }
+
+    function renderHeader() {
+        const q = escapeHtml(filterText);
+        const clear = filterText ? `<button class="sess-search-clear" data-action="clear-filter" title="Clear">×</button>` : '';
+        return `
+            <div class="sess-header">
+                <div class="sess-search">
+                    <input type="search" class="sess-search-input" placeholder="Filter by connection or SQL fragment…"
+                           value="${q}" data-field="filter" spellcheck="false" autocomplete="off" />
+                    ${clear}
+                </div>
+                ${renderUnifiedAutoBanner()}
+            </div>`;
+    }
+
+    function render(el) {
+        root = el;
+        el.innerHTML = `
+            <div class="sess-panel">
+                ${renderHeader()}
+                ${renderSection('active', 'Connections', renderActiveConnections())}
+                ${renderSection('pool', 'Pool Stats', renderPoolStats(), {
+                    controlsBodyId: 'pool-controls', controlsHtml: renderPoolControls()
+                })}
+                ${renderSection('svr', 'Server Sessions', renderServerSessions(), {
+                    hint: '(active tab · Top 10)',
+                    controlsBodyId: 'svr-controls', controlsHtml: renderServerControls()
+                })}
+                ${renderSection('running', 'Running Queries', renderRunning())}
+            </div>`;
+        bindDelegatedHandlers(el);
+        startTickIfNeeded();
+        // Fetch once on mount so the user sees data without having to click refresh.
+        refreshPoolStats();
+        startPoolPollingIfNeeded();
+        refreshServerSessions();
+        startServerPollingIfNeeded();
+    }
+
+    function bindDelegatedHandlers(el) {
+        // Filter input — live filter, no debounce needed (local).
+        const input = el.querySelector('.sess-search-input');
+        if (input) {
+            input.addEventListener('input', (e) => {
+                filterText = e.target.value || '';
+                // Partial refresh without losing focus.
+                const a = root.querySelector('[data-body="active"]');
+                const p = root.querySelector('[data-body="pool"]');
+                const s = root.querySelector('[data-body="svr"]');
+                const r = root.querySelector('[data-body="running"]');
+                if (a) a.innerHTML = renderActiveConnections();
+                if (p) p.innerHTML = renderPoolStats();
+                if (s) s.innerHTML = renderServerSessions();
+                if (r) r.innerHTML = renderRunning();
+                // Toggle clear button without re-rendering the input itself.
+                const wrap = root.querySelector('.sess-search');
+                if (wrap) {
+                    const existing = wrap.querySelector('.sess-search-clear');
+                    if (filterText && !existing) {
+                        const btn = document.createElement('button');
+                        btn.className = 'sess-search-clear';
+                        btn.dataset.action = 'clear-filter';
+                        btn.title = 'Clear';
+                        btn.textContent = '×';
+                        wrap.appendChild(btn);
+                    } else if (!filterText && existing) {
+                        existing.remove();
+                    }
+                }
+            });
+            // Escape clears filter
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && filterText) {
+                    filterText = '';
+                    input.value = '';
+                    input.dispatchEvent(new Event('input'));
+                }
+            });
+        }
+        el.onclick = async (ev) => {
+            // Section header toggle (ignore clicks on controls/arrow-row actions)
+            const secTitle = ev.target.closest('.sess-section-title[data-action="toggle-section"]');
+            if (secTitle && !ev.target.closest('[data-stop]') && !ev.target.closest('button[data-action]')) {
+                const id = secTitle.dataset.sectionId;
+                const set = loadSectionsCollapsed();
+                if (set.has(id)) set.delete(id); else set.add(id);
+                saveSectionsCollapsed(set);
+                refresh();
+                return;
+            }
+            // Expand/collapse arrow (handled before button so arrow doesn't fall through)
+            const arrow = ev.target.closest('.sess-arrow[data-action="toggle"]');
+            if (arrow) {
+                ev.stopPropagation();
+                const id = arrow.dataset.id;
+                const collapsed = loadCollapsed();
+                if (collapsed.has(id)) collapsed.delete(id); else collapsed.add(id);
+                saveCollapsed(collapsed);
+                refresh();
+                return;
+            }
+            // Child tab row click → switch to that tab
+            const child = ev.target.closest('.sess-tab-child');
+            if (child && !ev.target.closest('button')) {
+                switchTab(child.dataset.tabId);
+                return;
+            }
+            const btn = ev.target.closest('button[data-action]');
+            if (!btn) return;
+            ev.stopPropagation();
+            const action = btn.dataset.action;
+            const id = btn.dataset.id;
+            if (action === 'disconnect') {
+                try {
+                    await api.connections.disconnect(id);
+                    clearAutoCompleteCache(id);
+                    detachConnectionFromTabs(id);
+                    refresh();
+                    updateStatus('Disconnected');
+                } catch (e) { updateStatus('Disconnect failed: ' + e.message, true); }
+            } else if (action === 'connect') {
+                const conn = state.connections.find(c => c.id === id);
+                if (conn) { await pickConnectionForActiveTab(conn.id); refresh(); }
+            } else if (action === 'cancel') {
+                cancelQuery(id);
+            } else if (action === 'pool-refresh') {
+                refreshPoolStats();
+            } else if (action === 'pool-toggle-auto') {
+                togglePoolAutoRefresh();
+            } else if (action === 'svr-refresh') {
+                refreshServerSessions();
+            } else if (action === 'svr-toggle-auto') {
+                toggleServerAutoRefresh();
+            } else if (action === 'svr-kill') {
+                killServerSession(id);
+            } else if (action === 'clear-filter') {
+                filterText = '';
+                const i = root.querySelector('.sess-search-input');
+                if (i) { i.value = ''; i.dispatchEvent(new Event('input')); i.focus(); }
+            } else if (action === 'toggle-all-auto') {
+                const anyOn = poolAutoRefresh || svrAutoRefresh;
+                const target = !anyOn;
+                if (poolAutoRefresh !== target) togglePoolAutoRefresh();
+                if (svrAutoRefresh !== target) toggleServerAutoRefresh();
+                // Re-render banner only (buttons inside show new state)
+                const b = root.querySelector('.sess-auto-banner');
+                if (b) b.outerHTML = renderUnifiedAutoBanner();
+            } else if (action === 'dismiss-auto-banner') {
+                autoBannerDismissed = true;
+                try { localStorage.setItem(LS_AUTO_DISMISS, '1'); } catch (e) {}
+                const b = root.querySelector('.sess-auto-banner');
+                if (b) b.remove();
+            }
+        };
+    }
+
+    function refresh() {
+        if (!root) return;
+        // Header is self-contained — re-render only if filter is empty
+        // (so we don't destroy the input while user is typing).
+        const a = root.querySelector('[data-body="active"]');
+        const r = root.querySelector('[data-body="running"]');
+        const p = root.querySelector('[data-body="pool"]');
+        const s = root.querySelector('[data-body="svr"]');
+        if (a) a.innerHTML = renderActiveConnections();
+        if (r) r.innerHTML = renderRunning();
+        // Pool and Server sections re-render from the last snapshot; fresh
+        // data comes from polling or the user's refresh button (no
+        // auto-poll on every trivial state change).
+        if (p) p.innerHTML = renderPoolStats();
+        if (s) s.innerHTML = renderServerSessions();
+        // Apply section-collapse state (hidden attr + arrow)
+        const collapsed = loadSectionsCollapsed();
+        root.querySelectorAll('.sess-section').forEach(sec => {
+            const id = sec.dataset.section;
+            const isCol = collapsed.has(id);
+            sec.classList.toggle('sess-section-collapsed', isCol);
+            const body = sec.querySelector('.sess-section-body');
+            if (body) body.toggleAttribute('hidden', isCol);
+            const ar = sec.querySelector('.sess-sec-arrow');
+            if (ar) ar.classList.toggle('expanded', !isCol);
+        });
+        startTickIfNeeded();
+        startPoolPollingIfNeeded();
+        startServerPollingIfNeeded();
+    }
+
+    function openAndFocusSearch() {
+        // Ensure panel open + this tab active, then focus search input.
+        if (typeof RightPanel !== 'undefined') RightPanel.open('sessions');
+        setTimeout(() => {
+            const i = root && root.querySelector('.sess-search-input');
+            if (i) { i.focus(); i.select(); }
+        }, 50);
+    }
+
+    function startTickIfNeeded() {
+        stopTick();
+        if (!state.currentExecution) return;
+        if (!isActiveRightPanelTab()) return;
+        tickTimer = setInterval(() => {
+            if (!state.currentExecution) { stopTick(); return; }
+            if (!root) { stopTick(); return; }
+            const el = root.querySelector('[data-elapsed]');
+            if (el) el.textContent = formatElapsed(Date.now() - state.currentExecution.startedAt);
+        }, 1000);
+    }
+
+    function stopTick() {
+        if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+    }
+
+    return { render, refresh, openAndFocusSearch };
+})();
+
+// Lifecycle helper — called from tab/connection/query mutation sites so the
+// Sessions panel stays current whenever its pane is mounted.
+function refreshSessionsTabIfVisible() {
+    if (typeof SessionsTab === 'undefined') return;
+    try { SessionsTab.refresh(); } catch (e) {}
+}
+
+// ============================================================
+// Helper: insert SQL into current SQL editor (or open new tab if ERD active)
+// ============================================================
+function insertSqlSmart(sql) {
+    if (!sql) return;
+    const active = state.editors ? state.editors.find(t => t.id === state.activeEditorId) : null;
+    const isSqlTab = active && active.type === 'sql';
+    if (!isSqlTab) {
+        addEditorTab();
+    }
+    if (typeof monacoEditor === 'undefined' || !monacoEditor) return;
+    const sel = monacoEditor.getSelection();
+    const model = monacoEditor.getModel();
+    // If editor is empty, just set; otherwise insert at cursor/selection
+    if (!model.getValue().trim()) {
+        monacoEditor.setValue(sql);
+    } else {
+        monacoEditor.executeEdits('smart-insert', [{
+            range: sel,
+            text: sql,
+            forceMoveMarkers: true,
+        }]);
+    }
+    monacoEditor.focus();
+}
+
+// ============================================================
+// Inspector Tab (#100)
+// ============================================================
+const Inspector = (() => {
+    let rootEl = null;
+    let current = null; // { type:'table', connId, schema, table }
+
+    function show(target) {
+        current = target;
+        if (rootEl) renderContent();
+    }
+
+    function clear() {
+        current = null;
+        if (rootEl) renderContent();
+    }
+
+    function renderEmpty() {
+        rootEl.innerHTML = `
+            <div class="grp-empty">
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <div>선택된 대상이 없습니다.</div>
+                <div style="font-size:11px;opacity:0.7">Explorer에서 테이블을 클릭하면 컬럼·인덱스 정보가 표시됩니다.</div>
+            </div>`;
+    }
+
+    function renderLoading(target) {
+        rootEl.innerHTML = `
+            <div class="insp-header">
+                <div class="insp-title">${escapeHtml(target.schema)}.<strong>${escapeHtml(target.table)}</strong></div>
+            </div>
+            <div class="insp-section"><div class="insp-loading">Loading…</div></div>`;
+    }
+
+    async function renderTable(target) {
+        renderLoading(target);
+        let columns = [], indexes = [];
+        try { columns = await api.metadata.columns(target.connId, target.schema, target.table); } catch (e) {}
+        try { indexes = await api.metadata.indexes(target.connId, target.schema, target.table); } catch (e) {}
+        if (current !== target) return; // target changed during load
+
+        const pkCols = new Set(columns.filter(c => c.primaryKey || c.pk).map(c => c.name));
+        const colRows = columns.map(c => {
+            const isPk = pkCols.has(c.name) || c.primaryKey || c.pk;
+            const nullable = (c.nullable === true || c.nullable === 'YES' || c.isNullable === true) ? 'YES' : 'NO';
+            return `<tr>
+                <td>${isPk ? '<span class="insp-pk" title="Primary Key">PK</span>' : ''}</td>
+                <td>${escapeHtml(c.name || '')}</td>
+                <td class="insp-type">${escapeHtml(c.typeName || c.type || '')}</td>
+                <td class="insp-nullable">${nullable}</td>
+            </tr>`;
+        }).join('');
+
+        const idxRows = (indexes || []).map(ix => {
+            const cols = (ix.columnNames || ix.columns || []).join(', ');
+            const tag = ix.unique ? '<span class="insp-badge insp-badge-uniq">UNIQUE</span>' : '';
+            return `<tr>
+                <td>${escapeHtml(ix.name || '')}</td>
+                <td>${escapeHtml(cols)}</td>
+                <td>${tag}</td>
+            </tr>`;
+        }).join('');
+
+        rootEl.innerHTML = `
+            <div class="insp-header">
+                <div class="insp-title">${escapeHtml(target.schema)}.<strong>${escapeHtml(target.table)}</strong></div>
+                <div class="insp-sub">${columns.length} columns · ${(indexes||[]).length} indexes</div>
+                <div class="insp-actions">
+                    <button class="btn btn-ghost btn-sm insp-btn-select">SELECT *</button>
+                    <button class="btn btn-ghost btn-sm insp-btn-ddl">DDL</button>
+                </div>
+            </div>
+            <div class="insp-section">
+                <div class="insp-section-title">Columns</div>
+                <table class="insp-table">
+                    <thead><tr><th></th><th>Name</th><th>Type</th><th>Nullable</th></tr></thead>
+                    <tbody>${colRows || '<tr><td colspan="4" class="insp-empty-row">(no columns)</td></tr>'}</tbody>
+                </table>
+            </div>
+            <div class="insp-section">
+                <div class="insp-section-title">Indexes</div>
+                <table class="insp-table">
+                    <thead><tr><th>Name</th><th>Columns</th><th>Unique</th></tr></thead>
+                    <tbody>${idxRows || '<tr><td colspan="3" class="insp-empty-row">(no indexes)</td></tr>'}</tbody>
+                </table>
+            </div>`;
+
+        rootEl.querySelector('.insp-btn-select').onclick = () => {
+            insertSqlSmart(buildSelectAll(target.connId, target.schema, target.table));
+        };
+        rootEl.querySelector('.insp-btn-ddl').onclick = async () => {
+            try {
+                const res = await api.metadata.ddl(target.connId, target.schema, target.table);
+                if (res && res.ddl) insertSqlSmart(res.ddl);
+            } catch (e) {
+                updateStatus('Failed to load DDL: ' + e.message, true);
+            }
+        };
+    }
+
+    function renderContent() {
+        if (!current) { renderEmpty(); return; }
+        if (current.type === 'table') { renderTable(current); return; }
+        renderEmpty();
+    }
+
+    function render(el) {
+        rootEl = el;
+        el.classList.add('insp-root');
+        renderContent();
+    }
+
+    return { render, show, clear };
+})();
+
+// ============================================================
+// History Tab (#102)
+// ============================================================
+const HistoryTab = (() => {
+    let rootEl = null;
+    let section = 'recent'; // 'recent' | 'saved'
+
+    function insertSqlIntoEditor(sql) {
+        insertSqlSmart(sql);
+    }
+
+    async function refresh() {
+        const listEl = rootEl.querySelector('.hist-list');
+        if (!listEl) return;
+        listEl.innerHTML = '<div class="hist-loading">Loading…</div>';
+        try {
+            if (section === 'recent') {
+                const items = await api.history.list('', 30);
+                renderRecent(items || []);
+            } else {
+                const items = await api.savedQueries.list();
+                renderSaved(items || []);
+            }
+        } catch (e) {
+            listEl.innerHTML = `<div class="hist-empty">Failed to load: ${escapeHtml(e.message)}</div>`;
+        }
+    }
+
+    function renderRecent(items) {
+        const listEl = rootEl.querySelector('.hist-list');
+        if (items.length === 0) {
+            listEl.innerHTML = '<div class="hist-empty">No recent queries.</div>';
+            return;
+        }
+        listEl.innerHTML = '';
+        items.forEach(it => {
+            const el = document.createElement('div');
+            el.className = 'hist-item' + (it.error ? ' hist-item-error' : '');
+            el.innerHTML = `
+                <div class="hist-item-sql">${escapeHtml((it.sql || '').slice(0, 200))}</div>
+                <div class="hist-item-meta">
+                    <span>${typeof formatRelativeTime === 'function' ? formatRelativeTime(it.executedAt) : ''}</span>
+                    <span>${escapeHtml(it.connectionName || '')}</span>
+                    <span>${it.executionTimeMs != null ? it.executionTimeMs + 'ms' : ''}</span>
+                </div>`;
+            el.onclick = () => insertSqlIntoEditor(it.sql);
+            listEl.appendChild(el);
+        });
+    }
+
+    function renderSaved(items) {
+        const listEl = rootEl.querySelector('.hist-list');
+        if (items.length === 0) {
+            listEl.innerHTML = '<div class="hist-empty">No saved queries.<br><span style="opacity:0.7">Ctrl+S로 현재 쿼리 저장 가능</span></div>';
+            return;
+        }
+        listEl.innerHTML = '';
+        items.forEach(it => {
+            const el = document.createElement('div');
+            el.className = 'hist-item';
+            el.innerHTML = `
+                <div class="hist-item-name">${escapeHtml(it.name || '(untitled)')}</div>
+                <div class="hist-item-sql">${escapeHtml((it.sql || '').slice(0, 200))}</div>`;
+            el.onclick = () => insertSqlIntoEditor(it.sql);
+            listEl.appendChild(el);
+        });
+    }
+
+    function setSection(s) {
+        section = s;
+        rootEl.querySelectorAll('.hist-section-btn').forEach(b => {
+            b.classList.toggle('active', b.dataset.section === s);
+        });
+        refresh();
+    }
+
+    function render(el) {
+        rootEl = el;
+        el.classList.add('hist-root');
+        el.innerHTML = `
+            <div class="hist-switcher">
+                <button class="hist-section-btn active" data-section="recent">Recent</button>
+                <button class="hist-section-btn" data-section="saved">Saved</button>
+                <button class="hist-refresh-btn" title="Refresh">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                </button>
+            </div>
+            <div class="hist-list"></div>`;
+        el.querySelectorAll('.hist-section-btn').forEach(b => {
+            b.onclick = () => setSection(b.dataset.section);
+        });
+        el.querySelector('.hist-refresh-btn').onclick = () => refresh();
+        refresh();
+    }
+
+    return { render, refresh };
+})();
+
+// ============================================================
+// AI Chat Tab (#101) — migrates existing overlay into RightPanel tab
+// ============================================================
+const AiChatTab = (() => {
+    let migrated = false;
+
+    function render(el) {
+        if (migrated) {
+            // Re-attach existing nodes if rendered before (tab re-mount fallback)
+            return;
+        }
+        const overlay = document.getElementById('ai-chat-panel');
+        if (!overlay) return;
+
+        // Hide the close button in the migrated header (panel close handled by grp-close)
+        const closeBtn = overlay.querySelector('#btn-ai-chat-close');
+        if (closeBtn) closeBtn.style.display = 'none';
+
+        // Move all child nodes from overlay into tab pane
+        while (overlay.firstChild) {
+            el.appendChild(overlay.firstChild);
+        }
+        // Hide the now-empty overlay wrapper
+        overlay.style.display = 'none';
+        el.classList.add('ai-chat-pane');
+        migrated = true;
+
+        // Focus input when visible
+        const input = document.getElementById('ai-chat-input');
+        if (input) setTimeout(() => input.focus(), 50);
+    }
+
+    return { render };
+})();
 
 // ============================================================
 // Resizers
@@ -2669,7 +4550,7 @@ async function initErdTab(tab) {
               .catch(() => {});
         },
         onTableDoubleClick: (tableName) => {
-            const sql = `SELECT * FROM ${tab.schema ? tab.schema + '.' : ''}${tableName} LIMIT 100;`;
+            const sql = buildSelectAll(tab.connId, tab.schema, tableName);
             addEditorTab();
             const newTab = state.editors[state.editors.length - 1];
             if (newTab && newTab.model) newTab.model.setValue(sql);
@@ -3006,11 +4887,49 @@ function menuErdImport() {
 }
 
 // ============================================================
+// Fast Tooltips — migrate native [title] to [data-tooltip] so CSS
+// ::after can render without the browser's ~500ms delay.
+// ============================================================
+function migrateTooltip(el) {
+    if (!el || el.nodeType !== 1) return;
+    const t = el.getAttribute && el.getAttribute('title');
+    if (t && !el.hasAttribute('data-tooltip')) {
+        el.setAttribute('data-tooltip', t);
+        el.removeAttribute('title');
+    }
+}
+
+function initFastTooltips() {
+    document.querySelectorAll('[title]').forEach(migrateTooltip);
+    const observer = new MutationObserver(mutations => {
+        for (const m of mutations) {
+            if (m.type === 'attributes' && m.attributeName === 'title') {
+                migrateTooltip(m.target);
+            } else if (m.type === 'childList') {
+                m.addedNodes.forEach(node => {
+                    if (node.nodeType !== 1) return;
+                    migrateTooltip(node);
+                    if (node.querySelectorAll) node.querySelectorAll('[title]').forEach(migrateTooltip);
+                });
+            }
+        }
+    });
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['title'],
+    });
+}
+
+// ============================================================
 // Event Handlers
 // ============================================================
 function initEventHandlers() {
     document.getElementById('btn-add-conn').onclick = () => showConnectionDialog();
-    document.getElementById('btn-run').onclick = executeQuery;
+    document.getElementById('btn-run').onclick = () => executeQuery(false);
+    const btnRunAll = document.getElementById('btn-run-all');
+    if (btnRunAll) btnRunAll.onclick = () => executeQuery(true);
     document.getElementById('btn-explain').onclick = () => executeExplain(false);
     document.getElementById('btn-explain-analyze').onclick = () => executeExplain(true);
     document.getElementById('btn-format').onclick = formatSql;
@@ -3143,6 +5062,39 @@ function initEventHandlers() {
         if (mod && e.shiftKey && e.key === 'F') {
             e.preventDefault();
             formatSql();
+            return;
+        }
+
+        // Ctrl/Cmd+Shift+R — Toggle Right Panel (overrides browser hard-refresh)
+        if (mod && e.shiftKey && (e.key === 'R' || e.key === 'r')) {
+            e.preventDefault();
+            if (typeof RightPanel !== 'undefined') RightPanel.toggle();
+            return;
+        }
+
+        // Ctrl/Cmd+Shift+K — open active tab's connection dropdown (#124)
+        if (mod && e.shiftKey && (e.key === 'K' || e.key === 'k')) {
+            e.preventDefault();
+            openActiveTabConnectionMenu();
+            return;
+        }
+
+        // Ctrl/Cmd+Shift+S — open Sessions tab in right panel (#140 Phase D)
+        if (mod && e.shiftKey && (e.key === 'S' || e.key === 's')) {
+            e.preventDefault();
+            if (typeof SessionsTab !== 'undefined' && SessionsTab.openAndFocusSearch) {
+                SessionsTab.openAndFocusSearch();
+            } else if (typeof RightPanel !== 'undefined') {
+                RightPanel.open('sessions');
+            }
+            return;
+        }
+
+        // Ctrl/Cmd+Shift+D — duplicate active tab (#127 Phase F)
+        // Overrides the browser's default "Bookmark this tab" binding.
+        if (mod && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+            e.preventDefault();
+            duplicateActiveTab();
             return;
         }
 
@@ -3591,19 +5543,23 @@ function initNotesManager() {
 // Command Palette
 // ============================================================
 const CMD_PALETTE_COMMANDS = [
-    { name: 'Run Query', shortcut: 'Ctrl+Enter', action: executeQuery },
+    { name: 'Run Query (cursor/selection)', shortcut: 'Ctrl+Enter', action: () => executeQuery(false) },
+    { name: 'Run All Queries', shortcut: 'Ctrl+Shift+Enter', action: () => executeQuery(true) },
     { name: 'Explain', shortcut: 'Ctrl+E', action: () => executeExplain(false) },
     { name: 'Explain Analyze', shortcut: 'Ctrl+Shift+E', action: () => executeExplain(true) },
     { name: 'Format SQL', shortcut: 'Ctrl+Shift+F', action: formatSql },
     { name: 'Save Query', shortcut: 'Ctrl+S', action: saveCurrentQuery },
     { name: 'Saved Queries', shortcut: 'Alt+S', action: showSavedQueriesDialog },
     { name: 'New Tab', shortcut: 'Alt+N', action: () => addEditorTab() },
+    { name: 'Duplicate Tab', shortcut: 'Ctrl+Shift+D', action: () => duplicateActiveTab() },
     { name: 'Export CSV', action: () => exportData('csv') },
     { name: 'Export JSON', action: () => exportData('json') },
     { name: 'Export Excel', action: () => exportData('xlsx') },
     { name: 'Export SQL INSERT', action: () => exportData('insert') },
     { name: 'Query History', shortcut: 'Alt+H', action: showHistoryDialog },
     { name: 'AI Chat', shortcut: 'Ctrl+Shift+A', action: toggleAiChatPanel },
+    { name: 'Toggle Right Panel', shortcut: 'Ctrl+Shift+R', action: () => { if (typeof RightPanel !== 'undefined') RightPanel.toggle(); } },
+    { name: 'Open Sessions Panel', shortcut: 'Ctrl+Shift+S', action: () => { if (typeof SessionsTab !== 'undefined' && SessionsTab.openAndFocusSearch) SessionsTab.openAndFocusSearch(); else if (typeof RightPanel !== 'undefined') RightPanel.open('sessions'); } },
     { name: 'AI Settings', action: showAiSettingsDialog },
     { name: 'AI: Explain SQL', action: aiExplainSql },
     { name: 'AI: Optimize SQL', action: aiOptimizeSql },
@@ -3670,24 +5626,81 @@ function initCommandPalette() {
 }
 
 async function executeTxn(cmd) {
-    if (!state.activeConnectionId) { updateStatus('No active connection', true); return; }
+    const connId = getActiveConnectionId();
+    if (!connId) { updateStatus('No active connection', true); return; }
+    // #127 Phase F — warn about connection-pool semantics the first time a
+    // user touches a transaction boundary. BEGIN/START TRANSACTION submitted
+    // on its own does not extend to the next query because each execute()
+    // borrows a fresh connection from the pool.
+    if (/^(BEGIN|START\s+TRANSACTION)\b/i.test(cmd)) {
+        showTxWarningBanner();
+    }
     try {
-        const results = await api.query.execute(state.activeConnectionId, cmd, 1);
+        const results = await api.query.execute(connId, cmd, 1);
         const r = Array.isArray(results) ? results[0] : results;
         if (r && r.error) updateStatus(`${cmd} failed: ${r.errorMessage}`, true);
         else updateStatus(`${cmd} executed`);
     } catch (e) { updateStatus(`${cmd} failed: ${e.message}`, true); }
 }
 
+const TX_WARNING_DISMISS_KEY = 'dbee-tx-warning-dismissed';
+
+// Lightweight transient toast. Complements the status bar so the user
+// notices errors even when their eyes are on the editor.
+function showToast(message, level = 'info', durationMs = 3000) {
+    if (!message) return;
+    const host = document.getElementById('toast-host') || (() => {
+        const h = document.createElement('div');
+        h.id = 'toast-host';
+        h.className = 'toast-host';
+        document.body.appendChild(h);
+        return h;
+    })();
+    const toast = document.createElement('div');
+    toast.className = 'toast toast-' + (level || 'info');
+    toast.textContent = message;
+    host.appendChild(toast);
+    // Force reflow so the initial transform-from state applies before the class change
+    void toast.offsetWidth;
+    toast.classList.add('toast-visible');
+    setTimeout(() => {
+        toast.classList.remove('toast-visible');
+        setTimeout(() => toast.remove(), 200);
+    }, durationMs);
+}
+
+function showTxWarningBanner() {
+    if (localStorage.getItem(TX_WARNING_DISMISS_KEY) === '1') return;
+    if (document.getElementById('tx-warning-banner')) return;
+
+    const banner = document.createElement('div');
+    banner.id = 'tx-warning-banner';
+    banner.className = 'tx-warning-banner';
+    banner.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <div class="tx-warning-body">
+            <strong>Heads up: transactions don't carry across separate query runs.</strong>
+            <div>DBee pools connections, so each execute borrows a fresh one — <code>BEGIN/COMMIT</code> only work when all statements are sent together in a single SQL (separated by <code>;</code>).</div>
+        </div>
+        <button class="tx-warning-dismiss" title="Don't show again">&times;</button>
+    `;
+    document.body.appendChild(banner);
+    banner.querySelector('.tx-warning-dismiss').onclick = () => {
+        localStorage.setItem(TX_WARNING_DISMISS_KEY, '1');
+        banner.remove();
+    };
+}
+
 async function aiAlterSchema() {
     const desc = prompt('Describe the schema change in natural language:\n(e.g. "Add an email column to users table")');
     if (!desc) return;
-    if (!state.activeConnectionId) { updateStatus('No active connection', true); return; }
+    const connId = getActiveConnectionId();
+    if (!connId) { updateStatus('No active connection', true); return; }
     toggleAiChatPanel();
     appendChatMessage('user', `Alter schema: ${desc}`);
     const lm = appendChatMessage('loading', '');
     try {
-        const r = await api.llm.alterSql(state.activeConnectionId, desc);
+        const r = await api.llm.alterSql(connId, desc);
         lm.remove();
         appendChatMessage(r.error ? 'error' : 'assistant', r.message, r.sql);
     } catch (e) { lm.remove(); appendChatMessage('error', e.message); }
@@ -3700,7 +5713,7 @@ async function aiIndexHint() {
     appendChatMessage('user', `Suggest indexes for:\n${sql}`);
     const loadingMsg = appendChatMessage('loading', '');
     try {
-        const result = await api.llm.indexHint(state.activeConnectionId, sql);
+        const result = await api.llm.indexHint(getActiveConnectionId(), sql);
         loadingMsg.remove();
         if (result.error) appendChatMessage('error', result.message);
         else appendChatMessage('assistant', result.message, result.sql);
@@ -3711,11 +5724,12 @@ async function aiIndexHint() {
 // Dashboard (#77) - saved query + chart combos
 // ============================================================
 function showDashboard() {
-    if (!state.activeConnectionId) { updateStatus('Connect to a database first', true); return; }
+    const connId = getActiveConnectionId();
+    if (!connId) { updateStatus('Connect to a database first', true); return; }
     toggleAiChatPanel();
     appendChatMessage('user', 'Create a dashboard summary for this database');
     const lm = appendChatMessage('loading', '');
-    api.llm.chat(state.activeConnectionId, 'Give me 3-5 useful dashboard queries for this database: row counts per table, recent activity, data distributions. Return each as a SQL query in a code block.')
+    api.llm.chat(connId, 'Give me 3-5 useful dashboard queries for this database: row counts per table, recent activity, data distributions. Return each as a SQL query in a code block.')
         .then(r => { lm.remove(); appendChatMessage(r.error ? 'error' : 'assistant', r.message, r.sql); })
         .catch(e => { lm.remove(); appendChatMessage('error', e.message); });
 }
@@ -3768,9 +5782,9 @@ async function publishToConfluence() {
     const apiToken = prompt('API Token:');
     if (!apiToken) return;
 
-    const schema = state.autocompleteCache?.schemas?.[0]?.name || 'schema';
+    const schema = getAutocompleteCache(getActiveConnectionId())?.schemas?.[0]?.name || 'schema';
     try {
-        const doc = await api.metadata.documentation(state.activeConnectionId, schema);
+        const doc = await api.metadata.documentation(getActiveConnectionId(), schema);
         const content = doc.markdown.replace(/\n/g, '<br/>');
         const result = await api.request('POST', '/api/integration/confluence/publish', {
             baseUrl, spaceKey, title: `DBee Schema: ${schema}`, content, email, apiToken
@@ -3804,13 +5818,14 @@ async function createJiraIssue() {
 }
 
 async function exportSchemaDoc() {
-    if (!state.activeConnectionId) { updateStatus('No connection', true); return; }
+    const connId = getActiveConnectionId();
+    if (!connId) { updateStatus('No connection', true); return; }
     // Find current schema from autocomplete cache
-    const schema = state.autocompleteCache?.schemas?.[0]?.name;
+    const schema = getAutocompleteCache(connId)?.schemas?.[0]?.name;
     if (!schema) { updateStatus('No schema detected. Connect and expand a schema first.', true); return; }
     try {
         updateStatus('Generating documentation...');
-        const result = await api.metadata.documentation(state.activeConnectionId, schema);
+        const result = await api.metadata.documentation(connId, schema);
         const blob = new Blob([result.markdown], { type: 'text/markdown' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
@@ -3822,7 +5837,7 @@ async function exportSchemaDoc() {
 }
 
 function showProcessList() {
-    if (!state.activeConnectionId) { updateStatus('No connection', true); return; }
+    if (!getActiveConnectionId()) { updateStatus('No connection', true); return; }
     if (monacoEditor) {
         monacoEditor.setValue('SHOW PROCESSLIST;');
         executeQuery();
@@ -3830,7 +5845,7 @@ function showProcessList() {
 }
 
 function showDbStatus() {
-    if (!state.activeConnectionId) { updateStatus('No connection', true); return; }
+    if (!getActiveConnectionId()) { updateStatus('No connection', true); return; }
     if (monacoEditor) {
         monacoEditor.setValue(`-- DB Status Overview
 SHOW GLOBAL STATUS WHERE Variable_name IN ('Connections', 'Threads_connected', 'Threads_running', 'Questions', 'Slow_queries', 'Uptime');
@@ -3995,7 +6010,7 @@ function importConnections() {
 // Data Import
 // ============================================================
 function showImportDialog() {
-    if (!state.activeConnectionId) { updateStatus('No active connection', true); return; }
+    if (!getActiveConnectionId()) { updateStatus('No active connection', true); return; }
     document.getElementById('import-dialog').style.display = 'flex';
     document.getElementById('import-result').style.display = 'none';
     document.getElementById('import-type').onchange = () => {
@@ -4010,7 +6025,7 @@ async function executeImport() {
     if (!fileInput.files.length) { updateStatus('No file selected', true); return; }
 
     const formData = new FormData();
-    formData.append('connectionId', state.activeConnectionId);
+    formData.append('connectionId', getActiveConnectionId());
     formData.append('file', fileInput.files[0]);
     if (type === 'csv') {
         const table = document.getElementById('import-table').value.trim();
@@ -4140,7 +6155,7 @@ async function aiOptimizeSql() {
     appendChatMessage('user', `Optimize this SQL:\n${sql}`);
     const loadingMsg = appendChatMessage('loading', '');
     try {
-        const result = await api.llm.optimizeSql(state.activeConnectionId, sql);
+        const result = await api.llm.optimizeSql(getActiveConnectionId(), sql);
         loadingMsg.remove();
         if (result.error) appendChatMessage('error', result.message);
         else appendChatMessage('assistant', result.message, result.sql);
@@ -4168,19 +6183,18 @@ async function aiAnalyzeResult() {
 }
 
 // ============================================================
-// AI Chat Panel
+// AI Chat Panel — now backed by RightPanel 'ai' tab (#101)
 // ============================================================
 function toggleAiChatPanel() {
-    const panel = document.getElementById('ai-chat-panel');
-    const isVisible = panel.style.display !== 'none';
-    panel.style.display = isVisible ? 'none' : 'flex';
-    if (!isVisible) {
-        document.getElementById('ai-chat-input').focus();
+    if (typeof RightPanel !== 'undefined') {
+        RightPanel.open('ai');
+        const input = document.getElementById('ai-chat-input');
+        if (input) setTimeout(() => input.focus(), 50);
     }
 }
 
 function closeAiChatPanel() {
-    document.getElementById('ai-chat-panel').style.display = 'none';
+    if (typeof RightPanel !== 'undefined') RightPanel.close();
 }
 
 function saveAiChatHistory() {
@@ -4232,7 +6246,9 @@ function appendChatMessage(role, content, sql) {
     if (role === 'user') {
         msgDiv.innerHTML = `<div class="ai-msg-content">${escapeHtml(content)}</div>`;
     } else if (role === 'assistant') {
-        let html = `<div class="ai-msg-content">${formatAiMessage(content)}</div>`;
+        // If SQL is rendered separately below, strip fenced code blocks from the prose
+        const proseText = sql ? (content || '').replace(/```[a-zA-Z]*\s*\n?[\s\S]*?```/g, '').trim() : content;
+        let html = `<div class="ai-msg-content">${formatAiMessage(proseText)}</div>`;
         if (sql) {
             html += `<div class="ai-msg-sql">
                 <div class="ai-sql-header">
@@ -4323,7 +6339,8 @@ async function sendAiChatMessage() {
     const message = input.value.trim();
     if (!message) return;
 
-    if (!state.activeConnectionId) {
+    const connId = getActiveConnectionId();
+    if (!connId) {
         appendChatMessage('error', 'No active connection. Connect to a database first.');
         return;
     }
@@ -4335,8 +6352,9 @@ async function sendAiChatMessage() {
 
     document.getElementById('btn-ai-chat-send').disabled = true;
 
+    const payload = (typeof aiLanguageInstruction === 'function' ? aiLanguageInstruction() : '') + message;
     try {
-        const result = await api.llm.chat(state.activeConnectionId, message);
+        const result = await api.llm.chat(connId, payload);
         loadingMsg.remove();
 
         if (result.error) {
@@ -4360,6 +6378,8 @@ function initAiChat() {
 
     const chatInput = document.getElementById('ai-chat-input');
     chatInput.onkeydown = (e) => {
+        // Skip while IME composition is active (Korean/Japanese/Chinese input)
+        if (e.isComposing || e.keyCode === 229) return;
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             sendAiChatMessage();
@@ -4400,12 +6420,29 @@ async function showAiSettingsDialog() {
         document.getElementById('ai-model').value = settings.model || '';
         document.getElementById('ai-temperature').value = settings.temperature ?? 0.3;
         document.getElementById('ai-temperature-value').textContent = settings.temperature ?? 0.3;
+        const langEl = document.getElementById('ai-language');
+        if (langEl) langEl.value = getAiLanguage();
         updateAiProviderFields();
     } catch (e) {
         console.error('Failed to load AI settings:', e);
     }
 
     document.getElementById('ai-test-result').style.display = 'none';
+}
+
+function getAiLanguage() {
+    return localStorage.getItem('dbee.ai.language') || 'ko';
+}
+
+function setAiLanguage(lang) {
+    try { localStorage.setItem('dbee.ai.language', lang); } catch (e) {}
+}
+
+function aiLanguageInstruction() {
+    const lang = getAiLanguage();
+    if (lang === 'ko') return '한국어로 답변해 주세요. ';
+    if (lang === 'ja') return '日本語で回答してください。';
+    return 'Please respond in English. ';
 }
 
 function closeAiSettingsDialog() {
@@ -4469,6 +6506,8 @@ async function saveAiSettings() {
     const settings = getAiSettingsFromForm();
     try {
         await api.llm.saveSettings(settings);
+        const langEl = document.getElementById('ai-language');
+        if (langEl) setAiLanguage(langEl.value);
         updateStatus('AI settings saved');
         closeAiSettingsDialog();
     } catch (e) {
@@ -4811,6 +6850,7 @@ function initHistoryManager() {
 // ============================================================
 document.addEventListener('DOMContentLoaded', () => {
     initTheme();
+    initFastTooltips();
     initEventHandlers();
     initTunnelManager();
     initNotesManager();
@@ -4832,6 +6872,37 @@ document.addEventListener('DOMContentLoaded', () => {
     initAiChat();
     initAiSettings();
     initResizers();
+    RightPanel.init();
+    // Register Phase B tabs (overrides placeholder Inspector)
+    RightPanel.registerTab({
+        id: 'inspector',
+        label: 'Inspector',
+        tooltip: 'Inspector — 선택한 테이블/행/쿼리의 상세 정보',
+        icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+        render: (el) => Inspector.render(el),
+    });
+    RightPanel.registerTab({
+        id: 'ai',
+        label: 'AI',
+        tooltip: 'AI Chat (Ctrl+Shift+A)',
+        icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 2.8 4 6 4 6s4-3.2 4-6a4 4 0 0 0-4-4z"/><circle cx="12" cy="6" r="1.5"/></svg>',
+        render: (el) => AiChatTab.render(el),
+    });
+    RightPanel.registerTab({
+        id: 'history',
+        label: 'History',
+        tooltip: 'Query History & Saved Queries',
+        icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+        render: (el) => HistoryTab.render(el),
+    });
+    // #137 Sessions tab — connections, tab↔conn map, running queries.
+    RightPanel.registerTab({
+        id: 'sessions',
+        label: 'Sessions',
+        tooltip: 'Sessions — active connections, tab mapping, running queries',
+        icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>',
+        render: (el) => SessionsTab.render(el),
+    });
     initMonaco();
     loadConnections();
     loadSnippetsCache();

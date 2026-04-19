@@ -83,7 +83,11 @@ public class ConnectionService {
 
     public void connect(String id) {
         ConnectionInfo info = getConnection(id);
-        connectionManager.getOrCreate(info);
+        if (info.getDatabaseType() == com.dbee.model.DatabaseType.ELASTICSEARCH) {
+            connectionManager.getElasticSearchClient(info);
+        } else {
+            connectionManager.getOrCreate(info);
+        }
     }
 
     public void disconnect(String id) {
@@ -99,5 +103,9 @@ public class ConnectionService {
         String tunnelId = info.getProperties().get("sshTunnelId");
         if (tunnelId == null || tunnelId.isBlank()) return false;
         return connectionManager.getSshTunnelManager().isTunnelActive(tunnelId);
+    }
+
+    public java.util.List<java.util.Map<String, Object>> getPoolStats() {
+        return connectionManager.collectPoolStats();
     }
 }

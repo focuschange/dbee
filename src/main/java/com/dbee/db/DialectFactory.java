@@ -20,6 +20,7 @@ public class DialectFactory {
         DIALECTS.put(DatabaseType.DUCKDB, new DuckDBDialect());
         DIALECTS.put(DatabaseType.MONGODB, new MongoDBDialect());
         DIALECTS.put(DatabaseType.REDIS, new RedisDialect());
+        DIALECTS.put(DatabaseType.ELASTICSEARCH, new ElasticSearchDialect());
     }
 
     public static DatabaseDialect getDialect(DatabaseType type) {

@@ -33,7 +33,7 @@ public class ExportController {
     @PostMapping("/csv")
     public void exportCsv(@RequestBody QueryRequest request, HttpServletResponse response) throws IOException {
         QueryResult result = executeForExport(request);
-        if (result.isError()) { response.sendError(400, result.getErrorMessage()); return; }
+        if (result.isError()) { writeError(response, result.getErrorMessage()); return; }
         response.setContentType("text/csv");
         response.setHeader("Content-Disposition", "attachment; filename=\"export.csv\"");
         csvExporter.export(result, response.getOutputStream());
@@ -42,7 +42,7 @@ public class ExportController {
     @PostMapping("/json")
     public void exportJson(@RequestBody QueryRequest request, HttpServletResponse response) throws IOException {
         QueryResult result = executeForExport(request);
-        if (result.isError()) { response.sendError(400, result.getErrorMessage()); return; }
+        if (result.isError()) { writeError(response, result.getErrorMessage()); return; }
         response.setContentType("application/json");
         response.setHeader("Content-Disposition", "attachment; filename=\"export.json\"");
         jsonExporter.export(result, response.getOutputStream());
@@ -53,7 +53,7 @@ public class ExportController {
                              @RequestParam(defaultValue = "my_table") String tableName,
                              HttpServletResponse response) throws IOException {
         QueryResult result = executeForExport(request);
-        if (result.isError()) { response.sendError(400, result.getErrorMessage()); return; }
+        if (result.isError()) { writeError(response, result.getErrorMessage()); return; }
         response.setContentType("text/plain");
         response.setHeader("Content-Disposition", "attachment; filename=\"export.sql\"");
         new InsertExporter(tableName).export(result, response.getOutputStream());
@@ -62,7 +62,7 @@ public class ExportController {
     @PostMapping("/xlsx")
     public void exportXlsx(@RequestBody QueryRequest request, HttpServletResponse response) throws IOException {
         QueryResult result = executeForExport(request);
-        if (result.isError()) { response.sendError(400, result.getErrorMessage()); return; }
+        if (result.isError()) { writeError(response, result.getErrorMessage()); return; }
         response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
         response.setHeader("Content-Disposition", "attachment; filename=\"export.xlsx\"");
         xlsxExporter.export(result, response.getOutputStream());
@@ -71,7 +71,7 @@ public class ExportController {
     @PostMapping("/xml")
     public void exportXml(@RequestBody QueryRequest request, HttpServletResponse response) throws IOException {
         QueryResult result = executeForExport(request);
-        if (result.isError()) { response.sendError(400, result.getErrorMessage()); return; }
+        if (result.isError()) { writeError(response, result.getErrorMessage()); return; }
         response.setContentType("application/xml");
         response.setHeader("Content-Disposition", "attachment; filename=\"export.xml\"");
         xmlExporter.export(result, response.getOutputStream());
@@ -79,5 +79,11 @@ public class ExportController {
 
     private QueryResult executeForExport(QueryRequest request) {
         return queryService.execute(request.connectionId(), request.sql(), request.getMaxRowsOrDefault());
+    }
+
+    private void writeError(HttpServletResponse response, String msg) throws IOException {
+        response.setStatus(400);
+        response.setContentType("text/plain; charset=utf-8");
+        response.getWriter().write(msg != null ? msg : "Export failed");
     }
 }

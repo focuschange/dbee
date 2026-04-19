@@ -50,7 +50,7 @@
                 <button class="menu-trigger">Query</button>
                 <div class="menu-dropdown">
                     <button id="btn-run" class="menu-action menu-action-primary">Run <span class="menu-shortcut">Ctrl+Enter</span></button>
-                    <div class="menu-separator"></div>
+                    <button id="btn-run-all" class="menu-action">Run All <span class="menu-shortcut">Ctrl+Shift+Enter</span></button>
                     <div class="menu-separator"></div>
                     <div class="menu-label">Transaction</div>
                     <button class="menu-action" onclick="executeTxn('BEGIN')">BEGIN</button>
@@ -87,6 +87,7 @@
                 <button class="menu-trigger">View</button>
                 <div class="menu-dropdown">
                     <button class="menu-action" id="btn-toggle-toolbar" onclick="toggleIconToolbar()">Hide Toolbar</button>
+                    <button class="menu-action" onclick="RightPanel.toggle()">Toggle Right Panel <span class="menu-shortcut">Ctrl+Shift+R</span></button>
                     <button class="menu-action" onclick="showChartDialog()">Chart Visualization</button>
                     <button class="menu-action" onclick="showEditorSettings()">Editor Settings</button>
                     <div class="menu-separator"></div>
@@ -182,6 +183,9 @@
         <div class="tb-sep"></div>
         <button class="tb-btn" onclick="toggleAiChatPanel()" title="AI Chat (Ctrl+Shift+A)">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        </button>
+        <button id="btn-toggle-right-panel" class="tb-btn" onclick="RightPanel.toggle()" title="Toggle Right Panel (Ctrl+Shift+R)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
         </button>
     </div>
 
@@ -288,6 +292,11 @@
                         <button id="result-filter-clear" title="Clear filter">&times;</button>
                     </div>
                     <span id="result-summary"></span>
+                    <div id="result-export-buttons">
+                        <button class="btn-result-export export-option" data-format="csv" data-tooltip="Export CSV">CSV</button>
+                        <button class="btn-result-export export-option" data-format="json" data-tooltip="Export JSON">JSON</button>
+                        <button class="btn-result-export export-option" data-format="xlsx" data-tooltip="Export Excel (XLSX)">XLSX</button>
+                    </div>
                 </div>
                 <div id="result-content">
                     <div class="placeholder">
@@ -299,6 +308,20 @@
                 </div>
             </div>
         </div>
+
+        <!-- Global Right Panel Resizer -->
+        <div id="global-right-resizer" class="grp-hidden"><div class="resizer-handle"></div></div>
+
+        <!-- Global Right Panel (#99 frame) -->
+        <aside id="global-right-panel" class="grp-hidden" aria-label="Right panel">
+            <div class="grp-header">
+                <div id="grp-tab-list" class="grp-tab-list" role="tablist"></div>
+                <button id="grp-close" class="grp-close-btn" title="Close panel">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div id="grp-body" class="grp-body"></div>
+        </aside>
     </div>
 
     <!-- AI Chat Panel (slide-out) -->
@@ -391,6 +414,7 @@
                             <option value="DUCKDB">DuckDB</option>
                             <option value="MONGODB">MongoDB</option>
                             <option value="REDIS">Redis</option>
+                            <option value="ELASTICSEARCH">ElasticSearch</option>
                         </select>
                     </div>
                 </div>
@@ -830,6 +854,14 @@
                             <span id="ai-temperature-value">0.3</span>
                         </div>
                     </div>
+                    <div class="form-row">
+                        <label for="ai-language">Response Language</label>
+                        <select id="ai-language">
+                            <option value="ko">한국어 (Korean)</option>
+                            <option value="en">English</option>
+                            <option value="ja">日本語 (Japanese)</option>
+                        </select>
+                    </div>
                 </div>
                 <div id="ai-test-result" class="ai-test-result" style="display:none;"></div>
                 <div class="form-actions">
@@ -848,9 +880,13 @@
 
     <!-- Context Menu -->
     <div id="context-menu" class="context-menu" style="display:none;">
-        <div class="ctx-item" data-action="connect">
+        <div class="ctx-item" data-action="assign-to-current-tab">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
-            Connect
+            Assign to Current Tab
+        </div>
+        <div class="ctx-item" data-action="open-in-new-tab">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+            Open in New Tab
         </div>
         <div class="ctx-item" data-action="disconnect">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>

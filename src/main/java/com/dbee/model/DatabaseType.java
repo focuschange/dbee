@@ -20,7 +20,9 @@ public enum DatabaseType {
     MONGODB("MongoDB", "mongodb.jdbc.MongoDriver", 27017,
             "jdbc:mongodb://{host}:{port}/{database}"),
     REDIS("Redis", "jdbc.RedisDriver", 6379,
-            "jdbc:redis://{host}:{port}");
+            "jdbc:redis://{host}:{port}"),
+    ELASTICSEARCH("ElasticSearch", "", 9200,
+            "http://{host}:{port}");
 
     private final String displayName;
     private final String driverClass;
