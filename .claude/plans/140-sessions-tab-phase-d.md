@@ -1,7 +1,7 @@
 ---
 todo: 140
 title: Sessions 탭 Phase D — UX 통합 (단축키·색상 bar·검색·통합 Auto·섹션 접기)
-status: in_progress
+status: completed
 created: 2026-04-19
 branch: claude/keen-ptolemy-45a01e
 ---
